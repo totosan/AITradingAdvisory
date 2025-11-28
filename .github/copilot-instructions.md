@@ -6,14 +6,16 @@ This is a **MagenticOne multi-agent system** specialized for cryptocurrency anal
 
 ### Key Components
 
-- **MagenticOneGroupChat**: Orchestrator that coordinates 4 specialized agents
+- **MagenticOneGroupChat**: Orchestrator that coordinates 6 specialized agents
 - **Agents**: Each has specific expertise, tools, and system prompts
-  - `CryptoMarketAnalyst` - Fetches prices, market data (uses crypto_tools)
-  - `TechnicalAnalyst` - Charts, indicators, signals (uses crypto_tools + crypto_charts)
-  - `CryptoAnalysisCoder` - Writes Python analysis scripts
+  - `CryptoMarketAnalyst` - Fetches prices, market data (uses crypto_tools + exchange_tools)
+  - `TechnicalAnalyst` - Charts, indicators, signals, custom indicator design
+  - `ChartingAgent` - TradingView charts, multi-timeframe dashboards, smart alerts
+  - `CryptoAnalysisCoder` - Writes Python scripts, implements custom indicators
+  - `ReportWriter` - Creates professional Markdown reports
   - `Executor` (CodeExecutorAgent) - Runs generated code in isolated environment
-- **Ollama Client**: Custom `ChatCompletionClient` implementation with function calling support
-- **Crypto Tools**: Thin wrappers around CoinGecko API with `Annotated` type hints for function calling
+- **Ollama/Azure Client**: LLM integration with function calling support
+- **Data Sources**: Bitget Exchange (real-time) + CoinGecko API (historical)
 
 ### Critical Data Flow
 
@@ -55,26 +57,16 @@ When adding new tools:
 make setup && make start && make run
 
 # Local (requires Ollama running)
-source .venv/bin/activate
-python src/main.py
-
-# Advanced mode (examples/crypto_analysis.py)
-make crypto-interactive
-```
-
-### Testing & Verification
-
-```bash
-make test          # Docker health check
-make local-test    # Runs verify_platform.py (imports, tools, client)
-python demo.py     # Quick Bitcoin price fetch test
+make local-setup  # Uses UV
+make local-run
 ```
 
 ### Environment Configuration
 
 Set model in `src/config.py` or via environment:
 ```bash
-export OLLAMA_MODEL="gpt-oss:20b"  # Default
+export LLM_PROVIDER="ollama"  # or "azure"
+export OLLAMA_MODEL="gpt-oss:20b"
 export OLLAMA_BASE_URL="http://localhost:11434"
 export MAX_TURNS="20"
 ```
@@ -145,14 +137,19 @@ Pull via: `ollama pull gpt-oss:20b`
 2. **"Model not found"**: Run `ollama pull <model>` on host (not in Docker)
 3. **Docker Exit 137**: Out of memory - reduce `max_turns` or use lighter model
 4. **CoinGecko errors**: Use exact coin IDs from their API, not ticker symbols
-5. **Import errors**: Install with `pip install -e .` (editable mode for src/ imports)
+5. **Import errors**: Run `uv pip install -e .` to install in editable mode
 
 ## Key Files Reference
 
-- `src/main.py` - Main entry point, agent definitions
+- `src/main.py` - Main entry point, agent definitions, conversation mode
 - `src/config.py` - Configuration dataclasses (env-based)
 - `src/ollama_client.py` - Custom ChatCompletionClient with function calling
-- `src/crypto_tools.py` - All data fetching and indicator calculations
+- `src/crypto_tools.py` - CoinGecko data fetching and indicator calculations
 - `src/crypto_charts.py` - Plotly chart generation
-- `examples/crypto_analysis.py` - Advanced usage patterns
+- `src/exchange_tools.py` - Bitget exchange integration
+- `src/tradingview_tools.py` - TradingView-style chart generation
+- `src/smart_alerts.py` - AI-powered alert dashboard
+- `src/report_tools.py` - Markdown report generation
+- `src/indicator_registry.py` - Persistent custom indicators
+- `src/exchange_providers/` - Exchange abstraction layer
 - `Makefile` - All commands (run `make help`)

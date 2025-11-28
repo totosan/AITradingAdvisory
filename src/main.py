@@ -112,18 +112,23 @@ class CryptoAnalysisPlatform:
         # Initialize the model client based on provider
         if config.llm_provider == "azure":
             self.console.print(f"[cyan]Using Azure OpenAI: {config.azure_openai.deployment}[/cyan]")
-            # Map deployment to a standard OpenAI model name for capabilities
-            # Azure deployments can use custom names, so we assume gpt-4 capabilities
-            model_name = "gpt-4" if "gpt-4" in config.azure_openai.deployment.lower() else "gpt-3.5-turbo"
-            if "gpt-5" in config.azure_openai.deployment.lower():
-                model_name = "gpt-4"  # GPT-5 uses same capabilities as GPT-4
+            
+            # Model info for GPT-5 or other new models not yet in autogen's registry
+            model_info = {
+                "vision": True,
+                "function_calling": True,
+                "json_output": True,
+                "structured_output": True,
+                "family": "gpt-5",
+            }
             
             self.model_client = AzureOpenAIChatCompletionClient(
                 azure_deployment=config.azure_openai.deployment,
                 api_version=config.azure_openai.api_version,
                 azure_endpoint=config.azure_openai.endpoint,
                 api_key=config.azure_openai.api_key,
-                model=model_name,
+                model=config.azure_openai.model_name,
+                model_info=model_info,
             )
         else:
             self.console.print(f"[cyan]Using Ollama: {config.ollama.model}[/cyan]")

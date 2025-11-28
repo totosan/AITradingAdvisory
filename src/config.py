@@ -59,6 +59,7 @@ class AzureOpenAIConfig:
     api_key: str
     endpoint: str
     deployment: str = "gpt-4o"
+    model_name: str = "gpt-4o"  # The actual model name for token estimation
     api_version: str = "2024-02-15-preview"
     
     @classmethod
@@ -75,10 +76,15 @@ class AzureOpenAIConfig:
                 "in your .env file"
             )
         
+        deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", cls.deployment)
+        # Model name defaults to deployment name, but can be overridden
+        model_name = os.getenv("AZURE_OPENAI_MODEL_NAME", deployment)
+        
         return cls(
             api_key=api_key,
             endpoint=endpoint,
-            deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT", cls.deployment),
+            deployment=deployment,
+            model_name=model_name,
             api_version=os.getenv("AZURE_OPENAI_API_VERSION", cls.api_version),
         )
 
