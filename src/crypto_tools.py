@@ -2,10 +2,14 @@
 Crypto Analysis Tools for MagenticOne
 
 This module provides tools for cryptocurrency analysis including:
-- Real-time price fetching
+- Real-time price fetching (via exchange providers)
 - Historical data retrieval
 - Technical indicator calculations
 - Chart generation
+
+Note: This module maintains backward compatibility with the original CoinGecko-based
+implementation while also supporting the new exchange provider system. For advanced
+features (orderbook, futures, account data), use exchange_tools.py instead.
 """
 import requests
 import pandas as pd
@@ -14,12 +18,56 @@ from typing import Optional, Dict, List, Tuple, Annotated
 from datetime import datetime, timedelta
 import json
 
+# Import exchange providers for enhanced functionality
+try:
+    from .exchange_providers import (
+        ExchangeManager,
+        ProviderType,
+        CoinGeckoProvider,
+        BitgetProvider,
+    )
+    EXCHANGE_PROVIDERS_AVAILABLE = True
+except ImportError:
+    EXCHANGE_PROVIDERS_AVAILABLE = False
+
 
 class CryptoDataFetcher:
-    """Fetch cryptocurrency data from public APIs."""
+    """
+    Fetch cryptocurrency data from public APIs.
     
-    def __init__(self):
+    This class maintains the original CoinGecko-based implementation for
+    backward compatibility. For advanced exchange features, use the
+    ExchangeManager from exchange_providers module.
+    """
+    
+    def __init__(self, use_providers: bool = False):
+        """
+        Initialize the data fetcher.
+        
+        Args:
+            use_providers: If True and available, use ExchangeManager for data.
+                          If False, use direct CoinGecko API calls (original behavior).
+        """
         self.coingecko_base = "https://api.coingecko.com/api/v3"
+        self._use_providers = use_providers and EXCHANGE_PROVIDERS_AVAILABLE
+        self._manager: Optional[ExchangeManager] = None
+        
+        if self._use_providers:
+            self._init_providers()
+    
+    def _init_providers(self) -> None:
+        """Initialize exchange providers."""
+        self._manager = ExchangeManager()
+        self._manager.register_provider(ProviderType.COINGECKO, CoinGeckoProvider())
+        
+        # Try to add Bitget if configured
+        try:
+            bitget = BitgetProvider.from_env()
+            self._manager.register_provider(ProviderType.BITGET, bitget)
+            if bitget.is_authenticated:
+                self._manager.set_default_provider(ProviderType.BITGET)
+        except Exception:
+            pass
         
     def get_crypto_price(
         self,

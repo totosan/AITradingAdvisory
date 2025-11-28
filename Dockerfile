@@ -22,8 +22,8 @@ COPY examples/ ./examples/
 # Install dependencies
 RUN uv pip install --system -e .
 
-# Create outputs directory
-RUN mkdir -p /app/outputs
+# Create outputs directory with subdirectories
+RUN mkdir -p /app/outputs/code_execution/outputs
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
