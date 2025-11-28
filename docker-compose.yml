@@ -1,0 +1,36 @@
+services:
+  # MagenticOne application
+  magentic-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: magentic-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./examples:/app/examples
+      - ./outputs:/app/outputs
+      - ./data:/app/data
+    environment:
+      # LLM Provider
+      - LLM_PROVIDER=${LLM_PROVIDER:-azure}
+      # Azure OpenAI
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-gpt-4o}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-02-15-preview}
+      # Ollama (fallback)
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:latest}
+      - PYTHONUNBUFFERED=1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    stdin_open: true
+    tty: true
+    command: >
+      bash -c "
+        echo 'Connecting to host Ollama at http://host.docker.internal:11434...' &&
+        uv run python src/main.py
+      "
