@@ -1,0 +1,622 @@
+openapi: 3.0.3
+info:
+  title: MagenticOne Crypto Analysis API
+  description: |
+    Multi-agent cryptocurrency analysis platform API.
+    
+    This API provides:
+    - Real-time chat with AI agents for crypto analysis
+    - Chart generation with technical indicators
+    - Secure exchange credential management
+    - WebSocket streaming for live agent updates
+  version: 1.0.0
+  contact:
+    name: MagenticOne Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+  - url: http://backend:8000/api/v1
+    description: Docker internal
+
+tags:
+  - name: Health
+    description: Health check endpoints for container orchestration
+  - name: Chat
+    description: Chat and analysis endpoints
+  - name: Charts
+    description: Chart generation and retrieval
+  - name: Settings
+    description: Configuration and secrets management
+
+paths:
+  # ==========================================================================
+  # Health Endpoints
+  # ==========================================================================
+  /health:
+    get:
+      tags: [Health]
+      summary: Basic health check
+      description: Returns healthy if the API is running
+      operationId: healthCheck
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: healthy
+                timestamp: "2025-11-30T12:00:00Z"
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness check
+      description: Checks if all dependencies (LLM, etc.) are available
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: API is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+              example:
+                status: ready
+                checks:
+                  api: true
+                  ollama: true
+                  llm_provider: ollama
+                timestamp: "2025-11-30T12:00:00Z"
+        '503':
+          description: API is not ready (dependencies unavailable)
+
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      description: Simple check that the process is running
+      operationId: livenessCheck
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: alive
+
+  # ==========================================================================
+  # Chat Endpoints
+  # ==========================================================================
+  /chat/message:
+    post:
+      tags: [Chat]
+      summary: Send a chat message
+      description: |
+        Send a message to trigger multi-agent analysis.
+        For streaming responses, use the WebSocket endpoint `/ws/stream`.
+        This REST endpoint returns immediately with a conversation ID.
+      operationId: sendMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatMessage'
+            examples:
+              simple:
+                summary: Simple price query
+                value:
+                  message: "What is the current price of Bitcoin?"
+              analysis:
+                summary: Full analysis request
+                value:
+                  message: "Analyze Ethereum with RSI and MACD indicators"
+                  conversation_id: "conv_12345"
+      responses:
+        '200':
+          description: Message accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatAcceptedResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /chat/history:
+    get:
+      tags: [Chat]
+      summary: Get conversation history
+      description: Retrieve message history for a conversation
+      operationId: getHistory
+      parameters:
+        - name: conversation_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Conversation ID (optional, returns current if not specified)
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+          description: Maximum number of messages to return
+      responses:
+        '200':
+          description: Conversation history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationHistory'
+        '404':
+          description: Conversation not found
+
+  /chat/clear:
+    post:
+      tags: [Chat]
+      summary: Clear conversation
+      description: Clear the current conversation and start fresh
+      operationId: clearConversation
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                conversation_id:
+                  type: string
+      responses:
+        '200':
+          description: Conversation cleared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+
+  # ==========================================================================
+  # Chart Endpoints
+  # ==========================================================================
+  /charts/generate:
+    post:
+      tags: [Charts]
+      summary: Generate a chart
+      description: Generate a cryptocurrency chart with technical indicators
+      operationId: generateChart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChartRequest'
+            example:
+              symbol: BTCUSDT
+              interval: "1H"
+              indicators:
+                - rsi
+                - macd
+                - bollinger
+              theme: dark
+      responses:
+        '200':
+          description: Chart generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChartResponse'
+        '400':
+          description: Invalid chart parameters
+
+  /charts/{chart_id}:
+    get:
+      tags: [Charts]
+      summary: Get chart data
+      description: Retrieve data for a previously generated chart
+      operationId: getChart
+      parameters:
+        - name: chart_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Chart data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChartData'
+        '404':
+          description: Chart not found
+
+  /charts/list:
+    get:
+      tags: [Charts]
+      summary: List generated charts
+      description: List all charts generated in the current session
+      operationId: listCharts
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: List of charts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  charts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChartSummary'
+
+  # ==========================================================================
+  # Settings Endpoints
+  # ==========================================================================
+  /settings/exchange:
+    post:
+      tags: [Settings]
+      summary: Save exchange credentials
+      description: |
+        Save encrypted exchange credentials (Bitget).
+        Credentials are encrypted with AES-256 before storage.
+      operationId: saveExchangeCredentials
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExchangeCredentials'
+      responses:
+        '200':
+          description: Credentials saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '400':
+          description: Invalid credentials
+
+    get:
+      tags: [Settings]
+      summary: Get exchange status
+      description: Check if exchange credentials are configured (does not return secrets)
+      operationId: getExchangeStatus
+      responses:
+        '200':
+          description: Exchange status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExchangeStatus'
+
+    delete:
+      tags: [Settings]
+      summary: Remove exchange credentials
+      description: Delete stored exchange credentials
+      operationId: deleteExchangeCredentials
+      responses:
+        '200':
+          description: Credentials removed
+
+  /settings/llm:
+    post:
+      tags: [Settings]
+      summary: Configure LLM provider
+      description: Set the LLM provider configuration
+      operationId: configureLLM
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMConfig'
+      responses:
+        '200':
+          description: LLM configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+
+    get:
+      tags: [Settings]
+      summary: Get LLM configuration
+      description: Get current LLM provider settings
+      operationId: getLLMConfig
+      responses:
+        '200':
+          description: Current LLM config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMConfigResponse'
+
+# =============================================================================
+# Components
+# =============================================================================
+components:
+  schemas:
+    # Health Schemas
+    HealthResponse:
+      type: object
+      required: [status, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+
+    ReadinessResponse:
+      type: object
+      required: [status, checks, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [ready, degraded, not_ready]
+        checks:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: boolean
+              - type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    # Chat Schemas
+    ChatMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 5000
+          description: The user's message or query
+        conversation_id:
+          type: string
+          description: Optional conversation ID for continuity
+
+    ChatAcceptedResponse:
+      type: object
+      required: [conversation_id, status]
+      properties:
+        conversation_id:
+          type: string
+        status:
+          type: string
+          enum: [accepted, processing]
+        message:
+          type: string
+
+    ConversationHistory:
+      type: object
+      properties:
+        conversation_id:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistoryMessage'
+        created_at:
+          type: string
+          format: date-time
+
+    HistoryMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, agent]
+        content:
+          type: string
+        agent_name:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+
+    # Chart Schemas
+    ChartRequest:
+      type: object
+      required: [symbol]
+      properties:
+        symbol:
+          type: string
+          description: Trading pair symbol (e.g., BTCUSDT)
+          example: BTCUSDT
+        interval:
+          type: string
+          default: "1H"
+          enum: ["1m", "5m", "15m", "30m", "1H", "4H", "1D", "1W"]
+        indicators:
+          type: array
+          items:
+            type: string
+            enum: [sma, ema, rsi, macd, bollinger, volume]
+          default: [volume]
+        theme:
+          type: string
+          enum: [dark, light]
+          default: dark
+        days:
+          type: integer
+          default: 30
+          minimum: 1
+          maximum: 365
+
+    ChartResponse:
+      type: object
+      properties:
+        chart_id:
+          type: string
+        file_path:
+          type: string
+        url:
+          type: string
+          description: URL to access the chart
+        symbol:
+          type: string
+        interval:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ChartData:
+      type: object
+      properties:
+        chart_id:
+          type: string
+        symbol:
+          type: string
+        ohlcv:
+          type: array
+          items:
+            $ref: '#/components/schemas/OHLCV'
+        indicators:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: number
+
+    ChartSummary:
+      type: object
+      properties:
+        chart_id:
+          type: string
+        symbol:
+          type: string
+        interval:
+          type: string
+        url:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    OHLCV:
+      type: object
+      properties:
+        timestamp:
+          type: integer
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: number
+
+    # Settings Schemas
+    ExchangeCredentials:
+      type: object
+      required: [api_key, api_secret, passphrase]
+      properties:
+        api_key:
+          type: string
+          minLength: 1
+        api_secret:
+          type: string
+          minLength: 1
+        passphrase:
+          type: string
+          minLength: 1
+
+    ExchangeStatus:
+      type: object
+      properties:
+        configured:
+          type: boolean
+        exchange:
+          type: string
+          example: bitget
+        connected:
+          type: boolean
+        last_checked:
+          type: string
+          format: date-time
+
+    LLMConfig:
+      type: object
+      required: [provider]
+      properties:
+        provider:
+          type: string
+          enum: [ollama, azure]
+        model:
+          type: string
+          description: Model name (optional, uses default if not specified)
+        base_url:
+          type: string
+          description: API base URL (for Ollama)
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 0.7
+
+    LLMConfigResponse:
+      type: object
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        base_url:
+          type: string
+        connected:
+          type: boolean
+
+    # Common Schemas
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success, warning, error]
+        message:
+          type: string
+        details:
+          type: object
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+  # WebSocket is documented separately but referenced here
+  # See /ws/stream endpoint in WebSocket documentation

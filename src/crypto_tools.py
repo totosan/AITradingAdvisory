@@ -18,6 +18,12 @@ from typing import Optional, Dict, List, Tuple, Annotated
 from datetime import datetime, timedelta
 import json
 
+# Import caching for rate limit protection
+try:
+    from .cache import TTLCache, api_cache
+except ImportError:
+    from cache import TTLCache, api_cache
+
 # Import exchange providers for enhanced functionality
 try:
     from .exchange_providers import (
@@ -28,7 +34,16 @@ try:
     )
     EXCHANGE_PROVIDERS_AVAILABLE = True
 except ImportError:
-    EXCHANGE_PROVIDERS_AVAILABLE = False
+    try:
+        from exchange_providers import (
+            ExchangeManager,
+            ProviderType,
+            CoinGeckoProvider,
+            BitgetProvider,
+        )
+        EXCHANGE_PROVIDERS_AVAILABLE = True
+    except ImportError:
+        EXCHANGE_PROVIDERS_AVAILABLE = False
 
 
 class CryptoDataFetcher:
@@ -82,6 +97,12 @@ class CryptoDataFetcher:
         Returns:
             JSON string with price, market cap, volume, and price changes
         """
+        # Check cache first (30 second TTL for price data)
+        cache_key = f"price:{symbol.lower()}"
+        cached = api_cache.get(cache_key, TTLCache.TTL_PRICE)
+        if cached is not None:
+            return cached
+        
         try:
             url = f"{self.coingecko_base}/simple/price"
             params = {
@@ -100,7 +121,9 @@ class CryptoDataFetcher:
             if not data:
                 return f"Error: Cryptocurrency '{symbol}' not found. Try common names like 'bitcoin', 'ethereum', 'solana'."
             
-            return json.dumps(data, indent=2)
+            result = json.dumps(data, indent=2)
+            api_cache.set(cache_key, result, TTLCache.TTL_PRICE)
+            return result
             
         except Exception as e:
             return f"Error fetching price data: {str(e)}"
@@ -120,6 +143,12 @@ class CryptoDataFetcher:
         Returns:
             JSON string with historical prices, market caps, and volumes
         """
+        # Check cache first (5 minute TTL for historical data)
+        cache_key = f"historical:{symbol.lower()}:{days}"
+        cached = api_cache.get(cache_key, TTLCache.TTL_HISTORICAL)
+        if cached is not None:
+            return cached
+        
         try:
             url = f"{self.coingecko_base}/coins/{symbol.lower()}/market_chart"
             params = {
@@ -148,7 +177,9 @@ class CryptoDataFetcher:
                 'prices': df_prices[['date', 'price']].tail(10).to_dict('records')
             }
             
-            return json.dumps(result, indent=2, default=str)
+            result_str = json.dumps(result, indent=2, default=str)
+            api_cache.set(cache_key, result_str, TTLCache.TTL_HISTORICAL)
+            return result_str
             
         except Exception as e:
             return f"Error fetching historical data: {str(e)}"
@@ -166,6 +197,12 @@ class CryptoDataFetcher:
         Returns:
             JSON string with detailed market data
         """
+        # Check cache first (2 minute TTL for market info)
+        cache_key = f"market_info:{symbol.lower()}"
+        cached = api_cache.get(cache_key, TTLCache.TTL_MARKET_INFO)
+        if cached is not None:
+            return cached
+        
         try:
             url = f"{self.coingecko_base}/coins/{symbol.lower()}"
             params = {
@@ -199,7 +236,9 @@ class CryptoDataFetcher:
                 'max_supply': market_data.get('max_supply'),
             }
             
-            return json.dumps(result, indent=2)
+            result_str = json.dumps(result, indent=2)
+            api_cache.set(cache_key, result_str, TTLCache.TTL_MARKET_INFO)
+            return result_str
             
         except Exception as e:
             return f"Error fetching market info: {str(e)}"

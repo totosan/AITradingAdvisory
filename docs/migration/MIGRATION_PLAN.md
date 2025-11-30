@@ -7,18 +7,34 @@ Transform the existing console-based MagenticOne Crypto Analysis Platform into a
 **Current State:** Console-based Python application with Rich UI  
 **Target State:** Full-stack web application with REST API backend + React frontend
 
+**Migration Status:** 🔄 In Progress - See [PROGRESS.md](./PROGRESS.md) for current state
+
 ---
 
 ## 📋 Table of Contents
 
-1. [Architecture Overview](#architecture-overview)
-2. [Phase 1: Backend API](#phase-1-backend-api)
-3. [Phase 2: Frontend Application](#phase-2-frontend-application)
-4. [Phase 3: Real-time Communication](#phase-3-real-time-communication)
-5. [Phase 4: Secrets Management](#phase-4-secrets-management)
-6. [Phase 5: Containerization & Azure Prep](#phase-5-containerization--azure-prep)
+0. [Phase 0: Pre-Migration Preparation](#phase-0-pre-migration-preparation) *(New)*
+1. [Phase 1: Backend API](#phase-1-backend-api)
+2. [Phase 2: Frontend Application](#phase-2-frontend-application)
+3. [Phase 3: Real-time Communication](#phase-3-real-time-communication)
+4. [Phase 4: Secrets Management](#phase-4-secrets-management)
+5. [Phase 5: Containerization & Azure Prep](#phase-5-containerization--azure-prep)
+6. [Phase 6: Post-Launch](#phase-6-post-launch) *(New)*
 7. [File Structure](#file-structure)
 8. [Migration Steps](#migration-steps)
+
+### Related Documents
+
+| Document | Purpose |
+|----------|---------|
+| [CHECKLIST.md](./CHECKLIST.md) | Task tracking checklist |
+| [PROGRESS.md](./PROGRESS.md) | Session log and status |
+| [PHASE_0_PREPARATION.md](./PHASE_0_PREPARATION.md) | Pre-migration tasks |
+| [PHASE_1_BACKEND.md](./PHASE_1_BACKEND.md) | Backend implementation |
+| [PHASE_2_FRONTEND.md](./PHASE_2_FRONTEND.md) | Frontend implementation |
+| [PHASE_3_REALTIME.md](./PHASE_3_REALTIME.md) | WebSocket details |
+| [PHASE_4_SECRETS.md](./PHASE_4_SECRETS.md) | Security implementation |
+| [PHASE_5_CONTAINERS.md](./PHASE_5_CONTAINERS.md) | Docker & Azure |
 
 ---
 
