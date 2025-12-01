@@ -43,10 +43,11 @@ export function ChartPanel() {
             {/* Chart display */}
             <div className="flex-1 rounded-lg overflow-hidden border border-border bg-background/50">
               {currentChart ? (
-                <img
+                <iframe
                   src={currentChart.url}
-                  alt={`${currentChart.symbol} ${currentChart.interval} chart`}
-                  className="w-full h-full object-contain"
+                  title={`${currentChart.symbol} ${currentChart.interval} chart`}
+                  className="w-full h-full border-0"
+                  sandbox="allow-scripts allow-same-origin"
                 />
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground">

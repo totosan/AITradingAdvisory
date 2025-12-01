@@ -43,18 +43,52 @@ Real-time market data, technical analysis, TradingView-style charts, and AI-powe
 ## 🚀 Quick Start
 
 ### Docker (Recommended)
+
+From your host terminal:
+
 ```bash
-make setup    # Initial setup
-make start    # Start services
-make run      # Launch platform
+make dev    # Start backend + frontend with Docker
 ```
 
-### Local
+**What you'll see:**
+```
+🔧 Starting development mode (Docker)...
+ ✔ Container magentic-backend-dev    Started
+ ✔ Container magentic-frontend-dev   Started
+magentic-backend-dev   | 🚀 Starting MagenticOne API
+magentic-backend-dev   | INFO:     Uvicorn running on http://0.0.0.0:8500
+```
+
+**Access:**
+- 🌐 **Frontend**: http://localhost:5173
+- 📚 **API Docs**: http://localhost:8500/docs
+
+Press `Ctrl+C` to stop.
+
+### Other Commands
+
 ```bash
-make local-setup   # Create Python environment
-ollama serve       # Start Ollama (separate terminal)
-ollama pull gpt-oss:20b
-make local-run     # Launch platform
+make dev          # Docker development mode
+make dev-local    # Local mode (no Docker, hot reload)
+make prod         # Production mode
+make stop         # Stop all services
+```
+
+### Configuration
+
+Create `.env` in project root:
+
+```bash
+# Azure OpenAI
+LLM_PROVIDER=azure
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-key
+AZURE_OPENAI_DEPLOYMENT=gpt-4o
+
+# Or Ollama (local LLM)
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=llama3.2:latest
 ```
 
 ---
@@ -146,13 +180,16 @@ BITGET_PASSPHRASE=your-passphrase
 ## 🛠️ Commands
 
 ```bash
-make help       # Show all commands
-make run        # Run (Docker)
-make local-run  # Run (local)
-make logs       # View logs
-make shell      # Container shell
-make clean      # Cleanup
-make rebuild    # Rebuild containers
+make help         # Show all commands
+make dev          # Development mode (Docker)
+make dev-local    # Development mode (local, hot reload)
+make dev-backend  # Backend only (local)
+make dev-frontend # Frontend only (local)
+make prod         # Production mode
+make stop         # Stop all services
+make logs         # View logs
+make status       # Check container status
+make clean        # Cleanup
 ```
 
 ---

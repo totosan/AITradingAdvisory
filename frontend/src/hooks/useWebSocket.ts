@@ -61,7 +61,7 @@ export function useWebSocket() {
           chart_id: event.chart_id,
           url: event.url,
           symbol: event.symbol,
-          interval: '',
+          interval: event.interval || '',
           created_at: event.timestamp,
         });
         break;

@@ -1,0 +1,92 @@
+# Docker Compose - Production Configuration
+# MagenticOne Crypto Analysis Platform
+#
+# Usage:
+#   docker-compose up -d              # Start all services
+#   docker-compose up -d --build      # Rebuild and start
+#   docker-compose logs -f            # Follow logs
+#   docker-compose down               # Stop all services
+
+services:
+  # ==========================================================================
+  # Backend API Service
+  # ==========================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: magentic-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8500}:8500"
+    volumes:
+      # Persistent data
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+    environment:
+      # LLM Provider Configuration
+      - LLM_PROVIDER=${LLM_PROVIDER:-azure}
+      
+      # Azure OpenAI
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-gpt-4o}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-02-15-preview}
+      
+      # Ollama (alternative)
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:latest}
+      
+      # Exchange APIs
+      - EXCHANGE_DEFAULT_PROVIDER=${EXCHANGE_DEFAULT_PROVIDER:-coingecko}
+      - BITGET_API_KEY=${BITGET_API_KEY:-}
+      - BITGET_API_SECRET=${BITGET_API_SECRET:-}
+      - BITGET_PASSPHRASE=${BITGET_PASSPHRASE:-}
+      
+      # Application
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - magentic-net
+
+  # ==========================================================================
+  # Frontend Web UI
+  # ==========================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: magentic-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    environment:
+      - API_URL=http://backend:8500
+      - WS_URL=ws://backend:8500
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - magentic-net
+
+networks:
+  magentic-net:
+    driver: bridge
+
+volumes:
+  magentic-data:
+  magentic-outputs:

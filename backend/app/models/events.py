@@ -44,6 +44,7 @@ class ChartGeneratedEvent(BaseModel):
     chart_id: str
     url: str
     symbol: str
+    interval: str  # Required by frontend
     timestamp: datetime
 
 

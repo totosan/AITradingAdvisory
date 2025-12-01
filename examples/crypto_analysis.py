@@ -25,8 +25,8 @@ from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
 from autogen_agentchat.ui import Console
 from autogen_ext.code_executors.local import LocalCommandLineCodeExecutor
+from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
 
-from ollama_client import OllamaChatCompletionClient
 from config import AppConfig
 from crypto_tools import (
     get_crypto_price,
@@ -53,11 +53,13 @@ async def create_crypto_analyst_team(config: AppConfig):
     """
     console = RichConsole()
     
-    # Initialize model client
-    model_client = OllamaChatCompletionClient(
-        model=config.ollama.model,
-        base_url=config.ollama.base_url,
-        temperature=config.ollama.temperature,
+    # Initialize Azure OpenAI model client
+    model_client = AzureOpenAIChatCompletionClient(
+        azure_deployment=config.azure_openai.deployment,
+        api_version=config.azure_openai.api_version,
+        azure_endpoint=config.azure_openai.endpoint,
+        api_key=config.azure_openai.api_key,
+        model=config.azure_openai.model_name,
     )
     
     # Define available crypto tools

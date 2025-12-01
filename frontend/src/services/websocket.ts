@@ -157,17 +157,19 @@ export class WebSocketService {
   sendChat(message: string, conversationId?: string) {
     this.send({
       type: 'chat',
-      message,
-      conversation_id: conversationId,
+      payload: {
+        message,
+        conversation_id: conversationId,
+      },
     });
   }
   
   sendCancel() {
-    this.send({ type: 'cancel' });
+    this.send({ type: 'cancel', payload: {} });
   }
 
   sendPing() {
-    this.send({ type: 'ping' });
+    this.send({ type: 'ping', payload: {} });
   }
 
   get isConnected(): boolean {

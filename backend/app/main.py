@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from app.api.routes import health, chat, charts
+from app.api.routes import settings as settings_router
 from app.api.websocket import stream
 from app.core.config import get_settings
 
@@ -66,9 +67,7 @@ def create_app() -> FastAPI:
     # REST API routers
     app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
     app.include_router(charts.router, prefix="/api/v1/charts", tags=["Charts"])
-    
-    # Future routers:
-    # app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["Settings"])
+    app.include_router(settings_router.router, prefix="/api/v1", tags=["Settings"])
     
     # Static files for charts
     charts_dir = Path(settings.output_dir) / "charts"

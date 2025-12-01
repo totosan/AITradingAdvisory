@@ -49,6 +49,7 @@ export interface ChartEvent {
   chart_id: string;
   url: string;
   symbol: string;
+  interval: string;  // Required field
   timestamp: string;
 }
 
@@ -91,16 +92,20 @@ export type ServerEvent =
  */
 export interface ChatClientMessage {
   type: "chat";
-  message: string;
-  conversation_id?: string;
+  payload: {
+    message: string;
+    conversation_id?: string;
+  };
 }
 
 export interface CancelClientMessage {
   type: "cancel";
+  payload: Record<string, never>;
 }
 
 export interface PingClientMessage {
   type: "ping";
+  payload: Record<string, never>;
 }
 
 export type ClientMessage =

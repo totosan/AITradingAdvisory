@@ -1,6 +1,11 @@
+export { Alert, AlertTitle, AlertDescription } from "./Alert";
 export { Button, buttonVariants } from "./Button";
 export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent } from "./Card";
+export { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./Dialog";
 export { Input } from "./Input";
+export { Label } from "./Label";
+export { Select } from "./Select";
+export { Tabs, TabsList, TabsTrigger, TabsContent } from "./Tabs";
 export { Textarea } from "./Textarea";
 export { ScrollArea } from "./ScrollArea";
 export { Badge } from "./Badge";

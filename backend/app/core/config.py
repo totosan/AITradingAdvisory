@@ -4,6 +4,7 @@ Application configuration using Pydantic Settings.
 Environment variables are loaded from .env file or environment.
 """
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Literal, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -44,6 +45,20 @@ class Settings(BaseSettings):
     azure_openai_endpoint: Optional[str] = None
     azure_openai_deployment: str = "gpt-4o"
     azure_openai_api_version: str = "2024-02-15-preview"
+    azure_openai_model_name: Optional[str] = None
+    
+    # ==========================================================================
+    # Exchange Provider Configuration
+    # ==========================================================================
+    exchange_default_provider: str = "coingecko"
+    exchange_enable_bitget: bool = True
+    exchange_enable_coingecko: bool = True
+    
+    # Bitget API Configuration
+    bitget_api_key: Optional[str] = None
+    bitget_api_secret: Optional[str] = None
+    bitget_passphrase: Optional[str] = None
+    bitget_timeout: int = 10
     
     # ==========================================================================
     # Agent Configuration
@@ -54,11 +69,14 @@ class Settings(BaseSettings):
     # ==========================================================================
     # Storage
     # ==========================================================================
-    output_dir: str = "outputs"
-    secrets_dir: str = "/app/data"
+    # Use /app/outputs in Docker, project root outputs/ for local dev
+    output_dir: str = "/app/outputs" if Path("/app").exists() else str(Path(__file__).parent.parent.parent.parent / "outputs")
+    # Use /app/data in Docker, project data/ dir for local development
+    secrets_dir: str = "/app/data" if Path("/app/data").exists() else str(Path(__file__).parent.parent.parent.parent / "data")
     
     class Config:
-        env_file = ".env"
+        # Look for .env in project root (3 levels up from this file)
+        env_file = Path(__file__).parent.parent.parent.parent / ".env"
         env_file_encoding = "utf-8"
         # Allow comma-separated lists for CORS origins
         @classmethod

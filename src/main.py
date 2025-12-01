@@ -37,7 +37,6 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
 from rich import print as rprint
 
-from ollama_client import OllamaChatCompletionClient
 from config import AppConfig
 from crypto_tools import (
     get_crypto_price,
@@ -109,34 +108,26 @@ class CryptoAnalysisPlatform:
         self.conversation_history: List[Dict[str, str]] = []
         self.team = None  # Persistent team for conversation mode
         
-        # Initialize the model client based on provider
-        if config.llm_provider == "azure":
-            self.console.print(f"[cyan]Using Azure OpenAI: {config.azure_openai.deployment}[/cyan]")
-            
-            # Model info for GPT-5 or other new models not yet in autogen's registry
-            model_info = {
-                "vision": True,
-                "function_calling": True,
-                "json_output": True,
-                "structured_output": True,
-                "family": "gpt-5",
-            }
-            
-            self.model_client = AzureOpenAIChatCompletionClient(
-                azure_deployment=config.azure_openai.deployment,
-                api_version=config.azure_openai.api_version,
-                azure_endpoint=config.azure_openai.endpoint,
-                api_key=config.azure_openai.api_key,
-                model=config.azure_openai.model_name,
-                model_info=model_info,
-            )
-        else:
-            self.console.print(f"[cyan]Using Ollama: {config.ollama.model}[/cyan]")
-            self.model_client = OllamaChatCompletionClient(
-                model=config.ollama.model,
-                base_url=config.ollama.base_url,
-                temperature=config.ollama.temperature,
-            )
+        # Initialize the Azure OpenAI model client
+        self.console.print(f"[cyan]Using Azure OpenAI: {config.azure_openai.deployment}[/cyan]")
+        
+        # Model info for GPT-5 or other new models not yet in autogen's registry
+        model_info = {
+            "vision": True,
+            "function_calling": True,
+            "json_output": True,
+            "structured_output": True,
+            "family": "gpt-5",
+        }
+        
+        self.model_client = AzureOpenAIChatCompletionClient(
+            azure_deployment=config.azure_openai.deployment,
+            api_version=config.azure_openai.api_version,
+            azure_endpoint=config.azure_openai.endpoint,
+            api_key=config.azure_openai.api_key,
+            model=config.azure_openai.model_name,
+            model_info=model_info,
+        )
     
     async def _process_stream_minimal(self, stream) -> TaskResult:
         """

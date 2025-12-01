@@ -1,14 +1,24 @@
 """
 WebSocket endpoint for real-time agent streaming.
+
+Enhanced with:
+- Improved connection management
+- Task cancellation support
+- Error recovery
+- Heartbeat/ping support
+- Agent service integration
 """
 import asyncio
 import uuid
 import json
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
+
+from app.services.agent_service import AgentService
 
 logger = logging.getLogger(__name__)
 
@@ -16,41 +26,77 @@ router = APIRouter()
 
 
 class ConnectionManager:
-    """Manages WebSocket connections."""
+    """
+    Manages WebSocket connections with features for:
+    - Connection tracking
+    - Graceful disconnection
+    - Broadcast capabilities
+    - Task cancellation
+    """
     
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
-        self._active_tasks: Dict[str, Optional[asyncio.Task]] = {}
+        self.running_tasks: Dict[str, asyncio.Task] = {}
+        self._lock = asyncio.Lock()
     
-    async def connect(self, websocket: WebSocket, client_id: str):
+    async def connect(self, websocket: WebSocket, client_id: str) -> None:
+        """Accept and register a new connection."""
         await websocket.accept()
-        self.active_connections[client_id] = websocket
-        self._active_tasks[client_id] = None
-        logger.info(f"Client {client_id} connected. Total: {len(self.active_connections)}")
+        async with self._lock:
+            self.active_connections[client_id] = websocket
+        logger.info(f"Client {client_id[:8]}... connected. Total: {len(self.active_connections)}")
     
-    def disconnect(self, client_id: str):
-        self.active_connections.pop(client_id, None)
-        task = self._active_tasks.pop(client_id, None)
-        if task and not task.done():
-            task.cancel()
-        logger.info(f"Client {client_id} disconnected. Remaining: {len(self.active_connections)}")
+    async def disconnect(self, client_id: str) -> None:
+        """Remove a connection and cancel any running tasks."""
+        async with self._lock:
+            # Cancel running task
+            if client_id in self.running_tasks:
+                task = self.running_tasks.pop(client_id)
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+            
+            # Remove connection
+            self.active_connections.pop(client_id, None)
+        
+        logger.info(f"Client {client_id[:8]}... disconnected. Total: {len(self.active_connections)}")
     
-    async def send_json(self, client_id: str, data: dict) -> bool:
+    async def send_event(self, client_id: str, event: dict) -> bool:
+        """Send an event to a specific client. Returns False if failed."""
         websocket = self.active_connections.get(client_id)
         if not websocket:
             return False
+        
         try:
-            await websocket.send_json(data)
-            return True
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.send_json(event)
+                return True
         except Exception as e:
-            logger.warning(f"Failed to send to {client_id}: {e}")
-            return False
+            logger.warning(f"Error sending to {client_id[:8]}...: {e}")
+            await self.disconnect(client_id)
+        return False
     
-    def cancel_task(self, client_id: str) -> bool:
-        task = self._active_tasks.get(client_id)
-        if task and not task.done():
-            task.cancel()
-            return True
+    async def broadcast(self, event: dict, exclude: Optional[Set[str]] = None) -> None:
+        """Broadcast an event to all connected clients."""
+        exclude = exclude or set()
+        for client_id in list(self.active_connections.keys()):
+            if client_id not in exclude:
+                await self.send_event(client_id, event)
+    
+    def register_task(self, client_id: str, task: asyncio.Task) -> None:
+        """Register a running task for a client."""
+        self.running_tasks[client_id] = task
+    
+    async def cancel_task(self, client_id: str) -> bool:
+        """Cancel a client's running task."""
+        if client_id in self.running_tasks:
+            task = self.running_tasks.pop(client_id)
+            if not task.done():
+                task.cancel()
+                return True
         return False
     
     @property
@@ -58,49 +104,97 @@ class ConnectionManager:
         return len(self.active_connections)
 
 
+
 manager = ConnectionManager()
+
+
+async def process_chat_message(
+    client_id: str,
+    message: str,
+    agent_service: AgentService,
+    manager: ConnectionManager,
+) -> None:
+    """Process a chat message and stream responses."""
+    try:
+        async for event in agent_service.run_streaming(message):
+            # Convert Pydantic model to dict if needed
+            event_dict = event.model_dump() if hasattr(event, 'model_dump') else event
+            
+            # Ensure timestamp is serializable
+            if 'timestamp' in event_dict and hasattr(event_dict['timestamp'], 'isoformat'):
+                event_dict['timestamp'] = event_dict['timestamp'].isoformat()
+            
+            success = await manager.send_event(client_id, event_dict)
+            if not success:
+                logger.warning(f"Failed to send event to {client_id[:8]}..., client disconnected")
+                break  # Client disconnected
+    
+    except asyncio.CancelledError:
+        await manager.send_event(client_id, {
+            "type": "status",
+            "status": "cancelled",
+            "message": "Task cancelled by user",
+            "timestamp": datetime.now().isoformat(),
+        })
+        logger.info(f"Task cancelled for {client_id[:8]}...")
+    except Exception as e:
+        logger.exception(f"Error processing chat for {client_id[:8]}...: {e}")
+        await manager.send_event(client_id, {
+            "type": "error",
+            "message": str(e),
+            "details": type(e).__name__,
+            "recoverable": True,
+            "timestamp": datetime.now().isoformat(),
+        })
 
 
 @router.websocket("/ws/stream")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for streaming agent interactions."""
-    client_id = str(uuid.uuid4())
+    """
+    Main WebSocket endpoint for agent streaming.
     
+    Protocol:
+    - Client sends: {"type": "chat", "payload": {"message": "..."}}
+    - Client sends: {"type": "cancel", "payload": {}}
+    - Client sends: {"type": "ping", "payload": {}}
+    - Server sends: AgentStepEvent, ToolCallEvent, ResultEvent, etc.
+    """
+    client_id = str(uuid.uuid4())
     await manager.connect(websocket, client_id)
     
     # Send connection confirmation
-    await manager.send_json(client_id, {
+    await manager.send_event(client_id, {
         "type": "status",
         "status": "connected",
-        "message": f"Connected as {client_id}",
+        "message": f"Connected to agent service",
         "timestamp": datetime.now().isoformat(),
     })
     
+    agent_service = AgentService()
+    
     try:
         while True:
-            data = await websocket.receive_json()
-            message_type = data.get("type")
-            
-            if message_type == "ping":
-                await manager.send_json(client_id, {
-                    "type": "pong",
+            # Wait for message from client with timeout
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_json(),
+                    timeout=300.0  # 5 minute timeout
+                )
+            except asyncio.TimeoutError:
+                # Send ping to keep connection alive
+                await manager.send_event(client_id, {
+                    "type": "ping",
                     "timestamp": datetime.now().isoformat(),
                 })
+                continue
             
-            elif message_type == "cancel":
-                cancelled = manager.cancel_task(client_id)
-                await manager.send_json(client_id, {
-                    "type": "status",
-                    "status": "cancelled" if cancelled else "idle",
-                    "message": "Task cancelled" if cancelled else "No task to cancel",
-                    "timestamp": datetime.now().isoformat(),
-                })
+            msg_type = data.get("type")
+            payload = data.get("payload", {})
             
-            elif message_type == "chat":
-                message = data.get("message", "").strip()
-                
+            if msg_type == "chat":
+                message = payload.get("message", "").strip()
                 if not message:
-                    await manager.send_json(client_id, {
+                    await manager.send_event(client_id, {
                         "type": "error",
                         "message": "Empty message",
                         "recoverable": True,
@@ -109,44 +203,63 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
                 
                 # Notify processing started
-                await manager.send_json(client_id, {
+                await manager.send_event(client_id, {
                     "type": "status",
                     "status": "processing",
                     "message": f"Processing: {message[:50]}...",
                     "timestamp": datetime.now().isoformat(),
                 })
                 
-                # For now, just echo back a result
-                # TODO: Integrate with AgentService
-                await manager.send_json(client_id, {
-                    "type": "result",
-                    "content": f"**Echo:** {message}\n\n_Agent integration coming soon..._",
-                    "format": "markdown",
-                    "agents_used": ["Echo"],
-                    "timestamp": datetime.now().isoformat(),
-                })
+                # Create task for processing
+                task = asyncio.create_task(
+                    process_chat_message(client_id, message, agent_service, manager)
+                )
+                manager.register_task(client_id, task)
                 
-                await manager.send_json(client_id, {
+                # Wait for task to complete
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass  # Already handled in process_chat_message
+                
+                # Send idle status
+                await manager.send_event(client_id, {
                     "type": "status",
                     "status": "idle",
-                    "message": "Ready",
+                    "message": "Ready for next query",
+                    "timestamp": datetime.now().isoformat(),
+                })
+            
+            elif msg_type == "cancel":
+                cancelled = await manager.cancel_task(client_id)
+                await manager.send_event(client_id, {
+                    "type": "status",
+                    "status": "cancelled" if cancelled else "idle",
+                    "message": "Task cancelled" if cancelled else "No task to cancel",
+                    "success": cancelled,
+                    "timestamp": datetime.now().isoformat(),
+                })
+            
+            elif msg_type == "ping":
+                await manager.send_event(client_id, {
+                    "type": "pong",
                     "timestamp": datetime.now().isoformat(),
                 })
             
             else:
-                await manager.send_json(client_id, {
+                await manager.send_event(client_id, {
                     "type": "error",
-                    "message": f"Unknown message type: {message_type}",
+                    "message": f"Unknown message type: {msg_type}",
                     "recoverable": True,
                     "timestamp": datetime.now().isoformat(),
                 })
     
     except WebSocketDisconnect:
-        logger.info(f"Client {client_id} disconnected normally")
+        logger.info(f"Client {client_id[:8]}... disconnected normally")
     except Exception as e:
-        logger.exception(f"WebSocket error for {client_id}: {e}")
+        logger.exception(f"WebSocket error for {client_id[:8]}...: {e}")
     finally:
-        manager.disconnect(client_id)
+        await manager.disconnect(client_id)
 
 
 @router.get("/ws/status")

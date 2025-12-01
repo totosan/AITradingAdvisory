@@ -69,8 +69,7 @@ paths:
                 status: ready
                 checks:
                   api: true
-                  ollama: true
-                  llm_provider: ollama
+                  azure_openai: true
                 timestamp: "2025-11-30T12:00:00Z"
         '503':
           description: API is not ready (dependencies unavailable)
@@ -571,13 +570,10 @@ components:
       properties:
         provider:
           type: string
-          enum: [ollama, azure]
+          enum: [azure]
         model:
           type: string
-          description: Model name (optional, uses default if not specified)
-        base_url:
-          type: string
-          description: API base URL (for Ollama)
+          description: Model/deployment name
         temperature:
           type: number
           minimum: 0
@@ -590,8 +586,6 @@ components:
         provider:
           type: string
         model:
-          type: string
-        base_url:
           type: string
         connected:
           type: boolean

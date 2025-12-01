@@ -62,9 +62,16 @@ class AgentService:
     
     def __init__(self):
         self.settings = get_settings()
-        self.model_client = self._create_model_client()
+        self._model_client = None  # Lazy initialization
         self.conversation_history: List[Dict[str, str]] = []
         self._cancelled = False
+    
+    @property
+    def model_client(self):
+        """Lazy initialization of model client."""
+        if self._model_client is None:
+            self._model_client = self._create_model_client()
+        return self._model_client
     
     def _create_model_client(self):
         """Create the appropriate LLM client based on configuration."""
@@ -88,11 +95,15 @@ class AgentService:
                 model_info=model_info,
             )
         else:
-            from ollama_client import OllamaChatCompletionClient
-            return OllamaChatCompletionClient(
-                model=self.settings.ollama_model,
-                base_url=self.settings.ollama_base_url,
-                temperature=self.settings.ollama_temperature,
+            # Ollama fallback - for now, log a warning and use Azure if available
+            logger.warning(
+                "Ollama provider requested but not implemented. "
+                "Please set LLM_PROVIDER=azure and configure Azure OpenAI credentials."
+            )
+            # Raise error to prevent silent failures
+            raise NotImplementedError(
+                "Ollama provider not yet implemented. "
+                "Please set LLM_PROVIDER=azure in your environment."
             )
     
     async def _create_team(self) -> MagenticOneGroupChat:
@@ -280,6 +291,13 @@ Include executive summary, analysis, recommendations, and risk factors.""",
         """
         self._cancelled = False
         
+        # Send initial status
+        yield StatusEvent(
+            status="initializing",
+            message="Initializing agent team...",
+            timestamp=datetime.now(),
+        )
+        
         try:
             team = await self._create_team()
         except Exception as e:
@@ -291,6 +309,13 @@ Include executive summary, analysis, recommendations, and risk factors.""",
                 timestamp=datetime.now(),
             )
             return
+        
+        # Send ready status
+        yield StatusEvent(
+            status="processing",
+            message="Agent team ready, processing query...",
+            timestamp=datetime.now(),
+        )
         
         last_agent = None
         turn_count = 0
@@ -309,17 +334,28 @@ Include executive summary, analysis, recommendations, and risk factors.""",
                 # Handle TaskResult (final result)
                 if isinstance(msg, TaskResult):
                     # Extract final answer from messages
+                    final_content = None
                     for m in reversed(msg.messages):
                         if isinstance(m, (TextMessage, StopMessage)):
                             content = getattr(m, 'content', str(m))
                             if content and not content.startswith("TERMINATE"):
-                                yield FinalResultEvent(
-                                    content=content,
-                                    format="markdown",
-                                    agents_used=agents_used,
-                                    timestamp=datetime.now(),
-                                )
+                                final_content = content
                                 break
+                    
+                    if final_content:
+                        yield FinalResultEvent(
+                            content=final_content,
+                            format="markdown",
+                            agents_used=agents_used,
+                            timestamp=datetime.now(),
+                        )
+                    else:
+                        # No valid final result found
+                        yield StatusEvent(
+                            status="completed",
+                            message="Analysis completed",
+                            timestamp=datetime.now(),
+                        )
                     continue
                 
                 # Get source/agent name
@@ -361,10 +397,13 @@ Include executive summary, analysis, recommendations, and risk factors.""",
                             timestamp=datetime.now(),
                         )
                         
-                        # Check if it's a chart generation tool
+                        # Send progress update for chart generation
                         if 'chart' in tool_name.lower() or 'dashboard' in tool_name.lower():
-                            # ChartGeneratedEvent will be emitted from tool result
-                            pass
+                            yield StatusEvent(
+                                status="processing",
+                                message=f"Generating {tool_name}...",
+                                timestamp=datetime.now(),
+                            )
                 
                 # Emit tool result events
                 if isinstance(msg, ToolCallExecutionEvent):
@@ -379,16 +418,21 @@ Include executive summary, analysis, recommendations, and risk factors.""",
                                 import json
                                 if content.startswith('{'):
                                     chart_data = json.loads(content)
-                                    if 'file' in chart_data or 'path' in chart_data:
-                                        chart_path = chart_data.get('file') or chart_data.get('path', '')
+                                    # Check for various chart file keys
+                                    chart_path = chart_data.get('chart_file') or chart_data.get('file') or chart_data.get('path', '')
+                                    if chart_path and chart_data.get('status') == 'success':
+                                        # Extract filename from path
+                                        filename = Path(chart_path).name
                                         yield ChartGeneratedEvent(
                                             chart_id=call_id,
-                                            url=f"/charts/{Path(chart_path).name}" if chart_path else "",
+                                            url=f"/charts/{filename}",
                                             symbol=chart_data.get('symbol', 'unknown'),
+                                            interval=chart_data.get('interval', ''),
                                             timestamp=datetime.now(),
                                         )
-                            except (json.JSONDecodeError, Exception):
-                                pass
+                                        logger.info(f"Chart generated: {filename} for {chart_data.get('symbol')}")
+                            except (json.JSONDecodeError, Exception) as e:
+                                logger.debug(f"Not a JSON chart result: {e}")
                         
                         yield ToolResultEvent(
                             tool_name=call_id,
@@ -398,6 +442,7 @@ Include executive summary, analysis, recommendations, and risk factors.""",
                         )
         
         except asyncio.CancelledError:
+            logger.info("Agent task cancelled")
             yield ErrorEvent(
                 message="Task cancelled",
                 details="The analysis was cancelled by the user",

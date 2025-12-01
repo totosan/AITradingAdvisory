@@ -2,7 +2,7 @@
 Configuration module for MagenticOne Showcase
 """
 import os
-from typing import Optional, Literal, List
+from typing import Optional
 from dataclasses import dataclass, field
 
 
@@ -90,28 +90,9 @@ class AzureOpenAIConfig:
 
 
 @dataclass
-class OllamaConfig:
-    """Configuration for Ollama model."""
-    base_url: str = "http://localhost:11434"
-    model: str = "gpt-oss:20b"
-    temperature: float = 0.7
-    
-    @classmethod
-    def from_env(cls) -> "OllamaConfig":
-        """Create configuration from environment variables."""
-        return cls(
-            base_url=os.getenv("OLLAMA_BASE_URL", cls.base_url),
-            model=os.getenv("OLLAMA_MODEL", cls.model),
-            temperature=float(os.getenv("OLLAMA_TEMPERATURE", str(cls.temperature))),
-        )
-
-
-@dataclass
 class AppConfig:
     """Main application configuration."""
-    llm_provider: Literal["azure", "ollama"] = "azure"
     azure_openai: Optional[AzureOpenAIConfig] = None
-    ollama: Optional[OllamaConfig] = None
     exchange: Optional[ExchangeConfig] = None
     output_dir: str = "outputs"
     max_turns: int = 20
@@ -120,23 +101,12 @@ class AppConfig:
     @classmethod
     def from_env(cls) -> "AppConfig":
         """Create configuration from environment variables."""
-        provider = os.getenv("LLM_PROVIDER", "azure").lower()
-        
-        azure_config = None
-        ollama_config = None
-        
-        if provider == "azure":
-            azure_config = AzureOpenAIConfig.from_env()
-        else:
-            ollama_config = OllamaConfig.from_env()
-        
         return cls(
-            llm_provider=provider,  # type: ignore
-            azure_openai=azure_config,
-            ollama=ollama_config,
+            azure_openai=AzureOpenAIConfig.from_env(),
             exchange=ExchangeConfig.from_env(),
             output_dir=os.getenv("OUTPUT_DIR", cls.output_dir),
             max_turns=int(os.getenv("MAX_TURNS", str(cls.max_turns))),
             max_stalls=int(os.getenv("MAX_STALLS", str(cls.max_stalls))),
         )
+
 

@@ -1,0 +1,82 @@
+# Docker Compose - Development Configuration
+# MagenticOne Crypto Analysis Platform
+#
+# Usage:
+#   docker-compose -f docker-compose.dev.yml up      # Start with live reload
+#   docker-compose -f docker-compose.dev.yml up -d   # Start detached
+#   docker-compose -f docker-compose.dev.yml down    # Stop services
+#
+# Features:
+#   - Hot reload for both frontend and backend
+#   - Volume mounts for live code changes
+#   - Development-friendly ports
+#
+# NOTE: Volume mounts don't work in Docker-in-Docker (devcontainer) setups.
+#       For devcontainers, use "make dev-local" instead, or run services directly.
+
+services:
+  # ==========================================================================
+  # Backend API Service (Development)
+  # ==========================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: production
+    container_name: magentic-backend-dev
+    ports:
+      - "8500:8500"
+    # NOTE: Volume mounts removed - they don't work in Docker-in-Docker setups
+    # Source code is baked into the image at build time
+    # For code changes, rebuild with: docker-compose -f docker-compose.dev.yml up --build
+    environment:
+      # LLM Provider Configuration
+      - LLM_PROVIDER=${LLM_PROVIDER:-azure}
+      
+      # Azure OpenAI
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-gpt-4o}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-02-15-preview}
+      
+      # Ollama (alternative)
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:latest}
+      
+      # Exchange APIs
+      - EXCHANGE_DEFAULT_PROVIDER=${EXCHANGE_DEFAULT_PROVIDER:-coingecko}
+      - BITGET_API_KEY=${BITGET_API_KEY:-}
+      - BITGET_API_SECRET=${BITGET_API_SECRET:-}
+      - BITGET_PASSPHRASE=${BITGET_PASSPHRASE:-}
+      
+      # Development settings
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=DEBUG
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - magentic-dev
+
+  # ==========================================================================
+  # Frontend (Development with Vite)
+  # ==========================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: production
+    container_name: magentic-frontend-dev
+    ports:
+      - "5173:80"
+    environment:
+      - NODE_ENV=development
+      - API_URL=http://backend:8500
+      - WS_URL=ws://backend:8500
+    depends_on:
+      - backend
+    networks:
+      - magentic-dev
+
+networks:
+  magentic-dev:
+    driver: bridge
