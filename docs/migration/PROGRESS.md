@@ -11,6 +11,8 @@
 | Phase 4: Secrets | ✅ Complete | 2025-12-01 | 2025-12-01 | Vault ✅, Settings API ✅, Frontend ✅ (Integration parked) |
 | Phase 5: Containers | ✅ Complete | 2025-12-01 | 2025-12-01 | Docker ✅, Compose ✅, Azure Bicep ✅, CI/CD ✅ |
 
+**Archive:** Detailed playbooks for each phase now live in `docs/migration/archive/` to keep this folder focused on current progress + checklist.
+
 **Legend:** ✅ Complete | 🔄 In Progress | ⏳ Pending | ❌ Blocked
 
 ---

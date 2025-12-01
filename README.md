@@ -1,223 +1,161 @@
 # 🪙 Crypto Analysis Platform
 
-**A multi-agent cryptocurrency analysis system powered by MagenticOne.**
-
-Real-time market data, technical analysis, TradingView-style charts, and AI-powered trading insights.
+Multi-agent cryptocurrency research workstation with FastAPI backend, React/Vite frontend, and TradingView-style visualization. The migration from console to web (Phases 0‑5) is complete—this repo now reflects the production-ready stack.
 
 ---
 
-## 🎯 Features
-
-### 🤖 Multi-Agent Team
-| Agent | Role |
-|-------|------|
-| **📊 Market Analyst** | Prices, trends, market data, custom indicator ideas |
-| **📈 Technical Analyst** | Charts, indicators, signals, strategy design |
-| **📉 Charting Agent** | TradingView charts, multi-timeframe dashboards |
-| **👨‍💻 Analysis Coder** | Custom indicators, backtesting, code execution |
-| **📝 Report Writer** | Professional Markdown reports |
-| **🖥️ Executor** | Code execution sandbox |
-
-### 📊 Technical Analysis
-- **Indicators**: RSI, MACD, Bollinger Bands, SMA, EMA
-- **Custom Indicators**: Create, save, and reuse your own indicators
-- **Signal Detection**: Overbought/oversold, trend changes, divergences
-
-### 📉 Professional Charting
-- **TradingView-style** interactive HTML charts
-- **Multi-timeframe dashboards** (1H, 4H, 1D views)
-- **AI-annotated charts** with buy/sell markers
-- **Backtest visualizations** with equity curves
-
-### 🚨 Smart Alerts
-- **AI-powered scanning** across multiple symbols
-- **Confluence scoring** from multiple indicators
-- **Trade ideas** with entry/stop/target levels
-
-### 💹 Data Sources
-- **🔶 Bitget Exchange** - Real-time spot & futures, order books, OHLCV
-- **🦎 CoinGecko** - 10,000+ coins, historical data, market info
+## 🎯 Key Capabilities
+- 🤖 Specialized agent team for market data, indicators, charting, coding, reporting, and sandboxed execution
+- 📈 Technical analysis toolkit (RSI, MACD, Bollinger Bands, EMAs) with caching + rate-limit protection
+- 🖥️ Web experience with four-panel layout (Chat, Status, Results, Charts) and live WebSocket streaming
+- 💾 Persistent artifacts saved under `outputs/` (charts, dashboards, alerts, code execution)
+- 🔌 Data providers abstracted through CoinGecko + Bitget adapters
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Docker)
+1. Copy the environment template and fill credentials:
+   ```bash
+   cp .env.example .env
+   ```
+2. From your **host terminal** (outside the devcontainer):
+   ```bash
+   make dev
+   ```
+3. Open the forwarded ports:
+   - Frontend → http://localhost:5173
+   - API Docs → http://localhost:8500/docs
 
-### Docker (Recommended)
+Stop everything with `Ctrl+C` or `make stop`.
 
-From your host terminal:
+---
+
+## 💻 Local Development (no Docker)
+Recommended inside the VS Code devcontainer:
 
 ```bash
-make dev    # Start backend + frontend with Docker
+make dev-local        # Backend + frontend with hot reload
+make dev-backend      # FastAPI only (uses .venv)
+make dev-frontend     # React dev server only
 ```
 
-**What you'll see:**
-```
-🔧 Starting development mode (Docker)...
- ✔ Container magentic-backend-dev    Started
- ✔ Container magentic-frontend-dev   Started
-magentic-backend-dev   | 🚀 Starting MagenticOne API
-magentic-backend-dev   | INFO:     Uvicorn running on http://0.0.0.0:8500
-```
-
-**Access:**
-- 🌐 **Frontend**: http://localhost:5173
-- 📚 **API Docs**: http://localhost:8500/docs
-
-Press `Ctrl+C` to stop.
-
-### Other Commands
-
+Manual start:
 ```bash
-make dev          # Docker development mode
-make dev-local    # Local mode (no Docker, hot reload)
-make prod         # Production mode
-make stop         # Stop all services
-```
+# Backend
+source .venv/bin/activate
+python -m backend.app.main
 
-### Configuration
-
-Create `.env` in project root:
-
-```bash
-# Azure OpenAI
-LLM_PROVIDER=azure
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_API_KEY=your-key
-AZURE_OPENAI_DEPLOYMENT=gpt-4o
-
-# Or Ollama (local LLM)
-LLM_PROVIDER=ollama
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-OLLAMA_MODEL=llama3.2:latest
+# Frontend
+cd frontend && npm run dev
 ```
 
 ---
 
-## 💬 Usage
-
-Start the platform and ask questions:
-
-```
-> Analyze BTCUSDT with technical indicators
-> Generate a multi-timeframe dashboard for ETH
-> Create a TradingView chart for SUI with RSI and volume
-> Compare Solana vs Avalanche performance
-> Scan top coins for trading opportunities
-```
-
-### Conversation Mode
-The platform remembers context - ask follow-up questions:
-```
-> Analyze Bitcoin
-> Now show me a chart
-> What about Ethereum?
-```
-
-### Commands
-- `/clear` - Reset conversation history
-- `/history` - Show previous turns
-- `/single` - Toggle one-shot mode
-- `exit` - Quit
-
----
-
-## 📁 Project Structure
-
-```
-MagenticOne/
-├── src/
-│   ├── main.py                 # Entry point & agent definitions
-│   ├── config.py               # Configuration
-│   ├── ollama_client.py        # LLM client with function calling
-│   ├── crypto_tools.py         # CoinGecko data & indicators
-│   ├── crypto_charts.py        # Plotly chart generation
-│   ├── exchange_tools.py       # Bitget exchange integration
-│   ├── tradingview_tools.py    # TradingView-style charts
-│   ├── tradingview_udf_server.py  # Live data server
-│   ├── smart_alerts.py         # AI alert dashboard
-│   ├── report_tools.py         # Markdown report generation
-│   ├── indicator_registry.py   # Persistent custom indicators
-│   └── exchange_providers/     # Exchange abstraction layer
-├── outputs/
-│   ├── charts/                 # Generated HTML charts
-│   ├── dashboards/             # Multi-timeframe views
-│   ├── alerts/                 # Alert dashboards
-│   └── code_execution/         # Executed scripts
-├── data/
-│   └── indicators/             # Saved custom indicators
-├── config/
-│   └── .env.example            # Environment template
-├── docker-compose.yml
-├── Dockerfile
-├── Makefile
-└── pyproject.toml
-```
+## 🧪 Verification & Tests
+- Health check: `curl http://localhost:8500/api/v1/health`
+- WebSocket smoke test: `python backend/test_websocket.py`
+- Unit tests: `source .venv/bin/activate && pytest tests -v`
+- Full-stack test (agents + streaming): `python test_live_agent.py`
 
 ---
 
 ## ⚙️ Configuration
 
-### Environment Variables
+### 1. Base Environment
 ```bash
-# LLM Provider (azure or ollama)
+cp .env.example .env
+```
+Fill in one of the LLM providers:
+
+#### Azure OpenAI
+```bash
+LLM_PROVIDER=azure
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-key
+AZURE_OPENAI_DEPLOYMENT=gpt-4o
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+```
+
+#### Ollama (local)
+```bash
 LLM_PROVIDER=ollama
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gpt-oss:20b
-
-# Exchange (optional)
-BITGET_API_KEY=your-key
-BITGET_API_SECRET=your-secret
-BITGET_PASSPHRASE=your-passphrase
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=llama3.2:latest
 ```
 
-### Compatible Models
-- `gpt-oss:20b` - Recommended
-- `llama3.2` - Good alternative
-- `mistral`, `mixtral` - Also supported
-
----
-
-## 🛠️ Commands
-
+### 2. Optional Exchange Keys
 ```bash
-make help         # Show all commands
-make dev          # Development mode (Docker)
-make dev-local    # Development mode (local, hot reload)
-make dev-backend  # Backend only (local)
-make dev-frontend # Frontend only (local)
-make prod         # Production mode
-make stop         # Stop all services
-make logs         # View logs
-make status       # Check container status
-make clean        # Cleanup
+BITGET_API_KEY=...
+BITGET_API_SECRET=...
+BITGET_PASSPHRASE=...
 ```
 
 ---
 
-## 📈 Symbol Formats
+## 🧭 Project Layout
+```
+MagenticOne/
+├── backend/            # FastAPI app, routers, services, models
+├── frontend/           # React + Vite client
+├── src/                # Original console agents + shared tooling
+├── tests/              # Pytest suite (unit + integration)
+├── outputs/            # Charts, dashboards, code execution artifacts
+├── docs/migration/     # Progress + checklist (archive holds phase docs)
+├── Dockerfile, docker-compose.*
+├── Makefile
+└── pyproject.toml, uv.lock
+```
 
-| Source | Format | Example |
-|--------|--------|---------|
-| CoinGecko | lowercase ID | `bitcoin`, `ethereum`, `sui` |
-| Bitget | trading pair | `BTCUSDT`, `ETHUSDT`, `SUIUSDT` |
+---
+
+## 🛠️ Make Commands
+| Command | Description |
+|---------|-------------|
+| `make dev` | Backend + frontend via Docker (recommended) |
+| `make dev-local` | Run both services locally with hot reload |
+| `make dev-backend` / `make dev-frontend` | Start individual stacks |
+| `make prod` | Production-grade docker-compose stack |
+| `make stop` | Stop all running services |
+| `make logs` | Tail container logs |
+| `make status` | Container health summary |
+
+Run `make help` to see every available target.
+
+---
+
+## 💬 Using the Assistant
+- Ask for prices, indicator breakdowns, or strategy ideas: `Analyze BTCUSDT with MACD + RSI`
+- Chain questions—the MagenticOne group chat remembers context.
+- Charts appear automatically in the Charts panel whenever agents emit `chart_file` outputs.
+- CLI chat commands: `/clear`, `/history`, `/single` (toggle one-shot mode)
+
+Example prompts:
+```
+Generate a multi-timeframe dashboard for ETH with support/resistance
+Compare SOL vs AVAX performance and highlight divergences
+Create a TradingView chart for SUI with RSI and volume
+```
+
+---
+
+## 📡 Data & Symbols
+| Provider | Format | Example |
+|----------|--------|---------|
+| CoinGecko | lowercase asset id | `bitcoin`, `solana`, `sui` |
+| Bitget | pair symbol | `BTCUSDT`, `ETHUSDT`, `SUIUSDT` |
+
+Caching via `src/cache.py` shields CoinGecko from rate limits (30‑second TTL for price queries).
 
 ---
 
 ## ⚠️ Disclaimer
-
-**For educational and research purposes only.**
-
-- This is NOT financial advice
-- Cryptocurrency trading carries substantial risk
-- Always do your own research (DYOR)
-- Past performance ≠ future results
+Educational and research purposes only. This is **not** financial advice; trading crypto involves substantial risk.
 
 ---
 
-## 📝 Built With
-
-- [MagenticOne/AutoGen](https://github.com/microsoft/autogen) - Multi-agent framework
-- [Ollama](https://ollama.ai) - Local LLM runtime
-- [Lightweight Charts](https://www.tradingview.com/lightweight-charts/) - TradingView charting
-- [CoinGecko API](https://www.coingecko.com) - Market data
-- [Bitget API](https://www.bitget.com) - Exchange data
+## 🧱 Built With
+- [AutoGen / MagenticOne](https://github.com/microsoft/autogen)
+- [FastAPI](https://fastapi.tiangolo.com) + [Uvicorn](https://www.uvicorn.org)
+- [React](https://react.dev) + [Vite](https://vitejs.dev)
+- [CoinGecko API](https://www.coingecko.com) & [Bitget API](https://www.bitget.com)
+- [Azure OpenAI](https://azure.microsoft.com/products/ai-services/openai-service) or [Ollama](https://ollama.ai) for LLMs

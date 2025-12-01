@@ -4,11 +4,13 @@ Track your progress through the migration phases.
 
 **Quick Status:** Phase 0 ✅ | Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5 ✅
 
+> Detailed playbooks for every phase (including quick-start notes) now live in `docs/migration/archive/`. Link format: `./archive/PHASE_X.md`.
+
 ---
 
 ## Phase 0: Pre-Migration Preparation 🔄
 
-> See [PHASE_0_PREPARATION.md](./PHASE_0_PREPARATION.md) for details.
+> See [archive/PHASE_0_PREPARATION.md](./archive/PHASE_0_PREPARATION.md) for details.
 
 ### 0.1 Test Infrastructure
 - [x] Create `tests/` directory structure

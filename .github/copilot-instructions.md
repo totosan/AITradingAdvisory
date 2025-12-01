@@ -52,14 +52,14 @@ Console Mode (src/main.py)     Web Mode (backend/ + frontend/)
 
 ## Migration Status
 
-**Phases 0-3 COMPLETE** ✅ | **Phases 4-5 IN PROGRESS** 🔄
+**Phases 0-5 COMPLETE** ✅ (web migration finished)
 
-Track progress in:
-- `docs/migration/PROGRESS.md` - Current status and session logs
-- `docs/migration/CHECKLIST.md` - Task checklist
-- `docs/migration/PHASE_*.md` - Detailed implementation guides
+Track artifacts in:
+- `docs/migration/PROGRESS.md` – Current status and session logs
+- `docs/migration/CHECKLIST.md` – Active checklist
+- `docs/migration/archive/PHASE_*.md` – Archived phase guides + quick starts
 
-Current focus: **Phase 4 (Secrets)** and **Phase 5 (Containers)**
+Canonical setup + onboarding now lives in `README.md`.
 
 ### Verified Working (2025-12-01):
 - ✅ Backend API on port 8500
@@ -86,20 +86,21 @@ def get_crypto_price(
 ## Development Workflow
 
 ```bash
-# Console mode (existing)
-source .venv/bin/activate && python -m src.main
+# Docker (recommended)
+cp .env.example .env && make dev
 
-# Backend API (port 8500 to avoid VS Code conflicts)
-cd backend && ../.venv/bin/python3 -m uvicorn app.main:app --port 8500 --reload
+# Local (devcontainer) hot reload
+make dev-local           # backend + frontend
+make dev-backend         # FastAPI only
+make dev-frontend        # React only
 
-# Frontend dev server (port 5173)
-cd frontend && npm run dev
-
-# Run tests
+# Tests
 source .venv/bin/activate && pytest tests/ -v
+python backend/test_websocket.py   # WS smoke test
+python test_live_agent.py          # full stack sanity
 
-# Full Docker stack (after Phase 5)
-make setup && make start && make run
+# Console fallback (legacy mode)
+source .venv/bin/activate && python -m src.main
 ```
 
 ### Environment Setup
@@ -143,6 +144,7 @@ All go to `outputs/` - use `Path(config.output_dir)`, not hardcoded paths.
 
 | Purpose | File |
 |---------|------|
+| Project overview + quick start | `README.md` |
 | Console entry | `src/main.py` |
 | Backend entry | `backend/app/main.py` |
 | Frontend entry | `frontend/src/App.tsx` |
