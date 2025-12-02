@@ -36,6 +36,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Optional, List, Dict, Any
 
+from chart_assets import LIGHTWEIGHT_CHARTS_SCRIPT
+
 # Output directories
 ALERTS_DIR = Path("outputs/alerts")
 DASHBOARDS_DIR = Path("outputs/dashboards")
@@ -137,7 +139,7 @@ def generate_smart_alerts_dashboard(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🎯 AI Smart Alerts Dashboard</title>
-    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    {LIGHTWEIGHT_CHARTS_SCRIPT}
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ 
@@ -569,7 +571,7 @@ def create_trade_idea_alert(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{direction_icon} {symbol} Trade Idea</title>
-    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    {LIGHTWEIGHT_CHARTS_SCRIPT}
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ 

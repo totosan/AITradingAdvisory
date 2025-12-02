@@ -73,6 +73,11 @@ def create_app() -> FastAPI:
     charts_dir = Path(settings.output_dir) / "charts"
     charts_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/charts", StaticFiles(directory=str(charts_dir)), name="charts")
+
+    # Static assets (e.g., chart libraries)
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     
     return app
 

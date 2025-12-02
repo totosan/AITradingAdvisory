@@ -2,6 +2,60 @@ import { useEffect, useCallback } from 'react';
 import { wsService } from '@/services/websocket';
 import { useChatStore, useStatusStore, useChartStore } from '@/stores';
 import type { ServerEvent } from '@/types/websocket';
+import type { Attachment } from '@/types/api';
+
+const normalizeChartUrl = (rawUrl: string) => {
+  if (!rawUrl) return '';
+  if (/^https?:\/\//i.test(rawUrl)) {
+    return rawUrl;
+  }
+
+  let url = rawUrl;
+  if (url.startsWith('/app/')) {
+    url = url.replace('/app', '');
+  }
+
+  if (url.startsWith('/outputs/charts/')) {
+    url = url.replace('/outputs/charts/', '/charts/');
+  }
+
+  if (!url.startsWith('/')) {
+    url = `/${url}`;
+  }
+
+  return url;
+};
+
+const buildChartAttachmentFromEvent = (event: {
+  chart_id: string;
+  symbol: string;
+  interval?: string;
+  url: string;
+}): Attachment => ({
+  id: event.chart_id,
+  label: `${event.symbol} ${event.interval || ''}`.trim() || 'Chart',
+  url: normalizeChartUrl(event.url),
+  type: 'chart',
+});
+
+const chartPathRegex = /(\/app)?\/outputs\/charts\/([\w\-]+\.html)/gi;
+
+const extractChartAttachmentsFromContent = (content: string): Attachment[] => {
+  const attachments: Attachment[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = chartPathRegex.exec(content)) !== null) {
+    const filename = match[2];
+    attachments.push({
+      id: filename,
+      label: filename.replace(/\.html$/i, ''),
+      url: normalizeChartUrl(`/charts/${filename}`),
+      type: 'chart',
+    });
+  }
+
+  return attachments;
+};
 
 export function useWebSocket() {
   // Store actions
@@ -56,31 +110,58 @@ export function useWebSocket() {
         });
         break;
         
-      case 'chart':
+      case 'chart': {
+        const attachment = buildChartAttachmentFromEvent(event);
         addChart({
           chart_id: event.chart_id,
-          url: event.url,
+          url: attachment.url,
           symbol: event.symbol,
           interval: event.interval || '',
           created_at: event.timestamp,
         });
+        addMessage({
+          role: 'assistant',
+          content: `Chart generated for ${event.symbol} (${event.interval || 'custom'}).`,
+          timestamp: event.timestamp,
+          attachments: [attachment],
+        });
         break;
+      }
         
       case 'progress':
         setProgress(event);
         break;
         
-      case 'result':
+      case 'result': {
+        const attachments = extractChartAttachmentsFromContent(event.content);
+        attachments.forEach((attachment) => {
+          // Attempt to derive symbol/interval from filename (best effort)
+          const base = attachment.label;
+          const parts = base.split('_');
+          const symbol = parts[0] || 'Chart';
+          const interval = parts[1] || 'custom';
+
+          addChart({
+            chart_id: attachment.id,
+            url: attachment.url,
+            symbol,
+            interval,
+            created_at: event.timestamp,
+          });
+        });
+
         addMessage({
           role: 'assistant',
           content: event.content,
           timestamp: event.timestamp,
           agentsUsed: event.agents_used,
+          attachments: attachments.length ? attachments : undefined,
         });
         setProcessing(false);
         setLoading(false);
         resetStatus();
         break;
+      }
         
       case 'error':
         addMessage({

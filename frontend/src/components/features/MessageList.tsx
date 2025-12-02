@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import type { Message } from "@/types/api";
 import ReactMarkdown from "react-markdown";
+import { Paperclip } from "lucide-react";
 
 interface MessageListProps {
   messages: Message[];
@@ -59,6 +60,23 @@ function MessageBubble({ message }: MessageBubbleProps) {
             <ReactMarkdown>{message.content}</ReactMarkdown>
           </div>
         )}
+        {message.attachments?.length ? (
+          <div className="mt-3 border border-dashed border-border/60 rounded-lg bg-background/40">
+            {message.attachments.map((attachment) => (
+              <a
+                key={attachment.id}
+                href={attachment.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-secondary/40 transition-colors"
+              >
+                <Paperclip className="h-3.5 w-3.5" />
+                <span className="font-medium">{attachment.label}</span>
+                <span className="text-muted-foreground">Download</span>
+              </a>
+            ))}
+          </div>
+        ) : null}
         <div className="text-xs text-muted-foreground mt-1 opacity-70">
           {new Date(message.timestamp).toLocaleTimeString()}
         </div>

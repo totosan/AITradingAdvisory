@@ -17,7 +17,7 @@ export function StatusPanel() {
 
   return (
     <PanelContainer title="🎯 Agent Status" className="h-full">
-      <div className="space-y-4">
+      <div className="space-y-4 h-full overflow-y-auto pr-1">
         {/* Connection Status */}
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Connection</span>

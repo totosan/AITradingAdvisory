@@ -8,7 +8,13 @@ import { useStatusStore } from "@/stores/statusStore";
 import { useWebSocket } from "@/hooks";
 
 export function ChatPanel() {
-  const { messages, isProcessing, setIsProcessing } = useChatStore();
+  const {
+    messages,
+    isProcessing,
+    setIsProcessing,
+    clearMessages,
+    startNewConversation,
+  } = useChatStore();
   const { isConnected } = useStatusStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [inputValue, setInputValue] = useState("");
@@ -33,12 +39,28 @@ export function ChatPanel() {
     setIsProcessing(false);
   };
 
+  const handleNewConversation = () => {
+    const newId = startNewConversation();
+    console.log("Started conversation", newId);
+  };
+
   return (
     <PanelContainer
       title="💬 Chat"
       className="h-full"
       headerActions={
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              clearMessages();
+              handleNewConversation();
+            }}
+            disabled={isProcessing}
+          >
+            New Chat
+          </Button>
           <span
             className={`w-2 h-2 rounded-full ${
               isConnected ? "bg-green-500" : "bg-red-500"

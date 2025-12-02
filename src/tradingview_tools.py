@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Annotated, Optional, List, Dict, Any
 import pandas as pd
 
+from chart_assets import LIGHTWEIGHT_CHARTS_SCRIPT
+
 # Output directory for charts
 CHART_OUTPUT_DIR = Path("outputs/charts")
 
@@ -31,10 +33,10 @@ def _ensure_output_dir():
 def generate_tradingview_chart(
     symbol: Annotated[str, "Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')"],
     interval: Annotated[str, "Chart interval: '1m', '5m', '15m', '1H', '4H', '1D', '1W'"] = "1H",
-    indicators: Annotated[Optional[str], "Comma-separated list of indicators: 'rsi', 'macd', 'bollinger', 'sma', 'ema', 'volume'"] = "volume",
+    indicators: Annotated[Optional[str], "Comma-separated list of indicators: 'rsi', 'macd', 'bollinger', 'sma', 'ema', 'volume', 'sar'"] = "volume",
     theme: Annotated[str, "Chart theme: 'dark' or 'light'"] = "dark",
     title: Annotated[Optional[str], "Optional chart title"] = None,
-    annotations: Annotated[Optional[str], "JSON string of chart annotations/markers to add"] = None,
+    annotations: Annotated[Optional[str], "JSON string of chart annotations/markers to add (e.g., entry/exit points, support/resistance levels)"] = None,
 ) -> str:
     """
     Generate a professional TradingView-style interactive chart.
@@ -86,12 +88,13 @@ def generate_tradingview_chart(
             
             result = json.loads(get_ohlcv_data(symbol, exchange_interval, limit=200))
             
-            if result.get("status") == "success" and result.get("data"):
-                bars = result["data"]
+            # Handle both "data" and "candles" keys in response
+            bars = result.get("data") or result.get("candles")
+            if bars:
                 real_data = {
                     "candles": [
                         {
-                            "time": int(b["timestamp"]) // 1000,
+                            "time": int(datetime.fromisoformat(b["timestamp"].replace("Z", "+00:00")).timestamp()) if isinstance(b["timestamp"], str) else int(b["timestamp"]) // 1000,
                             "open": float(b["open"]),
                             "high": float(b["high"]),
                             "low": float(b["low"]),
@@ -101,7 +104,7 @@ def generate_tradingview_chart(
                     ],
                     "volumes": [
                         {
-                            "time": int(b["timestamp"]) // 1000,
+                            "time": int(datetime.fromisoformat(b["timestamp"].replace("Z", "+00:00")).timestamp()) if isinstance(b["timestamp"], str) else int(b["timestamp"]) // 1000,
                             "value": float(b["volume"]),
                             "color": "#26a69a" if float(b["close"]) >= float(b["open"]) else "#ef5350",
                         }
@@ -171,7 +174,7 @@ def generate_tradingview_chart(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{chart_title}</title>
-    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    {LIGHTWEIGHT_CHARTS_SCRIPT}
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ 
@@ -298,10 +301,9 @@ def generate_tradingview_chart(
     <script>
         const container = document.getElementById('chart-container');
         
-        // Create the main chart
+        // Create the main chart with autoSize for iframe compatibility
         const chart = LightweightCharts.createChart(container, {{
-            width: container.clientWidth,
-            height: container.clientHeight,
+            autoSize: true,
             layout: {{
                 background: {{ color: '{bg_color}' }},
                 textColor: '{text_color}',
@@ -333,35 +335,8 @@ def generate_tradingview_chart(
             wickUpColor: '{up_color}',
         }});
 
-        // Volume series (if enabled) - positioned at bottom 15% of chart
-        {'const volumeSeries = chart.addHistogramSeries({ color: "#26a69a", priceFormat: { type: "volume" }, priceScaleId: "", scaleMargins: { top: 0.85, bottom: 0 } });' if 'volume' in indicator_list else ''}
-
-        // Real data from exchange (if available) or placeholder
-        const realData = {json.dumps(real_data) if real_data else 'null'};
-        const chartData = realData || generatePlaceholderData();
-        candlestickSeries.setData(chartData.candles);
-        {'volumeSeries.setData(chartData.volumes);' if 'volume' in indicator_list else ''}
-
-        // Add SMA if enabled
-        {'const sma20Series = chart.addLineSeries({ color: "#2196F3", lineWidth: 2 }); sma20Series.setData(calculateSMA(chartData.candles, 20));' if 'sma' in indicator_list else ''}
-        
-        // Add EMA if enabled
-        {'const ema20Series = chart.addLineSeries({ color: "#FF9800", lineWidth: 2 }); ema20Series.setData(calculateEMA(chartData.candles, 20));' if 'ema' in indicator_list else ''}
-
-        // Add Bollinger Bands if enabled
-        {'const bbUpper = chart.addLineSeries({ color: "#9C27B0", lineWidth: 1 }); const bbLower = chart.addLineSeries({ color: "#9C27B0", lineWidth: 1 }); const bb = calculateBollingerBands(chartData.candles, 20, 2); bbUpper.setData(bb.upper); bbLower.setData(bb.lower);' if 'bollinger' in indicator_list else ''}
-
-        // Add markers/annotations if provided
-        const annotations = {json.dumps(chart_annotations)};
-        if (annotations.length > 0) {{
-            candlestickSeries.setMarkers(annotations.map(a => ({{
-                time: a.time,
-                position: a.position || 'aboveBar',
-                color: a.color || '{up_color}',
-                shape: a.shape || 'circle',
-                text: a.text || '',
-            }})));
-        }}
+        // Volume series (if enabled) - positioned at bottom 20% of chart on separate scale
+        {'const volumeSeries = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "volume" }); chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });' if 'volume' in indicator_list else ''}
 
         // Symbol-based price ranges for realistic placeholder data
         const symbolPrices = {{
@@ -459,19 +434,101 @@ def generate_tradingview_chart(
             return {{ upper, lower }};
         }}
 
+        // Calculate Parabolic SAR
+        function calculateSAR(data, acceleration = 0.02, maximum = 0.2) {{
+            const sar = [];
+            if (data.length < 2) return sar;
+            
+            let isUpTrend = data[1].close > data[0].close;
+            let ep = isUpTrend ? data[0].high : data[0].low;
+            let af = acceleration;
+            let sarValue = isUpTrend ? data[0].low : data[0].high;
+            
+            for (let i = 1; i < data.length; i++) {{
+                const prev = data[i - 1];
+                const curr = data[i];
+                
+                // Calculate new SAR
+                sarValue = sarValue + af * (ep - sarValue);
+                
+                // Check for trend reversal
+                if (isUpTrend) {{
+                    if (curr.low < sarValue) {{
+                        isUpTrend = false;
+                        sarValue = ep;
+                        ep = curr.low;
+                        af = acceleration;
+                    }} else {{
+                        if (curr.high > ep) {{
+                            ep = curr.high;
+                            af = Math.min(af + acceleration, maximum);
+                        }}
+                        sarValue = Math.min(sarValue, prev.low, curr.low);
+                    }}
+                }} else {{
+                    if (curr.high > sarValue) {{
+                        isUpTrend = true;
+                        sarValue = ep;
+                        ep = curr.high;
+                        af = acceleration;
+                    }} else {{
+                        if (curr.low < ep) {{
+                            ep = curr.low;
+                            af = Math.min(af + acceleration, maximum);
+                        }}
+                        sarValue = Math.max(sarValue, prev.high, curr.high);
+                    }}
+                }}
+                
+                sar.push({{ 
+                    time: curr.time, 
+                    value: sarValue,
+                    color: isUpTrend ? '#26a69a' : '#ef5350'
+                }});
+            }}
+            return sar;
+        }}
+
         // Interval switching (placeholder)
         function setInterval(interval) {{
             console.log('Switching to interval:', interval);
             alert('Interval switch to ' + interval + ' - Reload chart with new data');
         }}
 
-        // Responsive resize
-        window.addEventListener('resize', () => {{
-            chart.applyOptions({{ width: container.clientWidth }});
-        }});
+        // Load data and set chart series
+        const realData = {json.dumps(real_data) if real_data else 'null'};
+        const chartData = realData || generatePlaceholderData();
+        candlestickSeries.setData(chartData.candles);
+        {'volumeSeries.setData(chartData.volumes);' if 'volume' in indicator_list else ''}
 
-        // Fit content
-        chart.timeScale().fitContent();
+        // Add SMA if enabled
+        {'const sma20Series = chart.addLineSeries({ color: "#2196F3", lineWidth: 2 }); sma20Series.setData(calculateSMA(chartData.candles, 20));' if 'sma' in indicator_list else ''}
+        
+        // Add EMA if enabled
+        {'const ema20Series = chart.addLineSeries({ color: "#FF9800", lineWidth: 2 }); ema20Series.setData(calculateEMA(chartData.candles, 20));' if 'ema' in indicator_list else ''}
+
+        // Add Bollinger Bands if enabled
+        {'const bbUpper = chart.addLineSeries({ color: "#9C27B0", lineWidth: 1 }); const bbLower = chart.addLineSeries({ color: "#9C27B0", lineWidth: 1 }); const bb = calculateBollingerBands(chartData.candles, 20, 2); bbUpper.setData(bb.upper); bbLower.setData(bb.lower);' if 'bollinger' in indicator_list else ''}
+
+        // Add Parabolic SAR if enabled
+        {'const sarData = calculateSAR(chartData.candles); const sarSeries = chart.addLineSeries({ lineWidth: 0, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false }); sarSeries.setData(sarData.map(s => ({ time: s.time, value: s.value }))); sarSeries.setMarkers(sarData.map(s => ({ time: s.time, position: s.color === "#26a69a" ? "belowBar" : "aboveBar", color: s.color, shape: "circle", size: 0.5 })));' if 'sar' in indicator_list else ''}
+
+        // Add markers/annotations if provided
+        const annotations = {json.dumps(chart_annotations)};
+        if (annotations.length > 0) {{
+            candlestickSeries.setMarkers(annotations.map(a => ({{
+                time: a.time,
+                position: a.position || 'aboveBar',
+                color: a.color || '{up_color}',
+                shape: a.shape || 'circle',
+                text: a.text || '',
+            }})));
+        }}
+
+        // Fit content after a short delay to ensure layout is ready
+        setTimeout(() => {{
+            chart.timeScale().fitContent();
+        }}, 100);
     </script>
 </body>
 </html>
@@ -602,7 +659,7 @@ def generate_multi_timeframe_dashboard(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{symbol} Multi-Timeframe Dashboard</title>
-    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    {LIGHTWEIGHT_CHARTS_SCRIPT}
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ 
@@ -817,7 +874,7 @@ def generate_strategy_backtest_chart(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{strategy_name} Backtest - {symbol}</title>
-    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    {LIGHTWEIGHT_CHARTS_SCRIPT}
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ 

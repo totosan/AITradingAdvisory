@@ -19,6 +19,8 @@ import os
 import threading
 import time
 from datetime import datetime
+
+from chart_assets import LIGHTWEIGHT_CHARTS_SCRIPT
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from typing import Annotated, Optional, Dict, Any, List
@@ -391,7 +393,7 @@ def generate_live_chart_with_data(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{symbol} Live Chart</title>
-    <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+    {LIGHTWEIGHT_CHARTS_SCRIPT}
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ 

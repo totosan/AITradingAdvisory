@@ -1,12 +1,25 @@
+import { useMemo, useState, useCallback } from "react";
 import { PanelContainer } from "@/components/layout";
 import { Button } from "@/components/ui";
 import { useChartStore } from "@/stores/chartStore";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 
 export function ChartPanel() {
   const { charts, selectedChart, selectChart, clearCharts } = useChartStore();
+  const [refreshToken, setRefreshToken] = useState(0);
 
   const currentChart = selectedChart || charts[0];
+  const chartSrc = useMemo(() => {
+    if (!currentChart?.url) {
+      return "";
+    }
+    const refreshParam = currentChart.url.includes("?") ? "&" : "?";
+    return `${currentChart.url}${refreshParam}v=${refreshToken}`;
+  }, [currentChart, refreshToken]);
+
+  const handleRefresh = useCallback(() => {
+    setRefreshToken((prev) => prev + 1);
+  }, []);
 
   return (
     <PanelContainer
@@ -14,9 +27,24 @@ export function ChartPanel() {
       className="h-full"
       headerActions={
         charts.length > 0 && (
-          <Button variant="ghost" size="icon" onClick={clearCharts}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleRefresh}
+              title="Reload chart"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={clearCharts}
+              title="Clear charts"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
         )
       }
     >
@@ -44,7 +72,8 @@ export function ChartPanel() {
             <div className="flex-1 rounded-lg overflow-hidden border border-border bg-background/50">
               {currentChart ? (
                 <iframe
-                  src={currentChart.url}
+                  key={chartSrc}
+                  src={chartSrc}
                   title={`${currentChart.symbol} ${currentChart.interval} chart`}
                   className="w-full h-full border-0"
                   sandbox="allow-scripts allow-same-origin"

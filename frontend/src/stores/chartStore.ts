@@ -24,10 +24,20 @@ export const useChartStore = create<ChartState>((set) => ({
   selectedChart: null,
   isGenerating: false,
   
-  addChart: (chart) => set((state) => ({
-    charts: [chart, ...state.charts],
-    selectedChart: chart, // Auto-select new chart
-  })),
+  addChart: (chart) => set((state) => {
+    const exists = state.charts.some(
+      (c) => c.chart_id === chart.chart_id || c.url === chart.url
+    );
+
+    if (exists) {
+      return state;
+    }
+
+    return {
+      charts: [chart, ...state.charts],
+      selectedChart: chart,
+    };
+  }),
   
   removeChart: (chartId) => set((state) => ({
     charts: state.charts.filter((c) => c.chart_id !== chartId),

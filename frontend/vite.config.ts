@@ -26,6 +26,10 @@ export default defineConfig({
         target: 'http://localhost:8500',
         changeOrigin: true,
       },
+      '/static': {
+        target: 'http://localhost:8500',
+        changeOrigin: true,
+      },
     },
   },
 })

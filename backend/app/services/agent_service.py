@@ -6,8 +6,10 @@ CryptoAnalysisPlatform into a streaming API service.
 """
 import asyncio
 import sys
+import json
+import re
 from datetime import datetime
-from typing import AsyncIterator, Optional, List, Dict, Any
+from typing import AsyncIterator, Optional, List, Dict, Any, Union
 from pathlib import Path
 import logging
 
@@ -50,6 +52,58 @@ AGENT_EMOJIS = {
     'ChartingAgent': '📉',
     'Executor': '🖥️',
 }
+
+
+ChartContent = Union[str, Dict[str, Any], List[Any]]
+
+
+def _extract_chart_data(content: ChartContent) -> Optional[Dict[str, Any]]:
+    """Extract structured chart info from various Autogen result shapes."""
+    if content is None:
+        return None
+
+    # Direct dict payload already structured
+    if isinstance(content, dict):
+        # Autogen can wrap text payloads in {"type": "output_text", "text": "..."}
+        text_field = content.get("text")
+        if isinstance(text_field, str):
+            return _extract_chart_data(text_field)
+        return content
+
+    # Lists typically wrap multiple parts, take the first chart-like entry
+    if isinstance(content, list):
+        for item in content:
+            chart_data = _extract_chart_data(item)
+            if chart_data:
+                return chart_data
+        return None
+
+    # Strings may be JSON or plain text with a chart path reference
+    if isinstance(content, str):
+        text = content.strip()
+        if not text:
+            return None
+
+        lowered = text.lower()
+        if "chart" not in lowered and ".html" not in lowered:
+            return None
+
+        if text.startswith("{"):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                pass
+
+        match = re.search(r"(?:/app)?/outputs/charts/([\w\-]+\.html)", text)
+        if match:
+            filename = match.group(1)
+            return {
+                "chart_file": f"/outputs/charts/{filename}",
+                "filename": filename,
+                "status": "success",
+            }
+
+    return None
 
 
 class AgentService:
@@ -275,6 +329,24 @@ Include executive summary, analysis, recommendations, and risk factors.""",
             max_turns=self.settings.max_turns,
             max_stalls=self.settings.max_stalls,
         )
+
+    def _build_prompt_with_history(self, message: str) -> str:
+        """Combine prior conversation history with the new user query."""
+        if not self.conversation_history:
+            return message
+        # Use the most recent 8 exchanges for context
+        history_slice = self.conversation_history[-8:]
+        history_lines = []
+        for entry in history_slice:
+            role = entry.get("role", "user").capitalize()
+            content = entry.get("content", "")
+            history_lines.append(f"{role}: {content}")
+        history_text = "\n".join(history_lines)
+        return (
+            "You are continuing an ongoing crypto analysis conversation. "
+            "Respect the prior context when responding.\n"
+            f"Conversation history:\n{history_text}\n\nUser: {message}"
+        )
     
     async def run_streaming(self, message: str) -> AsyncIterator:
         """
@@ -320,9 +392,11 @@ Include executive summary, analysis, recommendations, and risk factors.""",
         last_agent = None
         turn_count = 0
         agents_used = []
+        prompt = self._build_prompt_with_history(message)
+        self.add_to_history("user", message)
         
         try:
-            async for msg in team.run_stream(task=message):
+            async for msg in team.run_stream(task=prompt):
                 if self._cancelled:
                     yield StatusEvent(
                         status="cancelled",
@@ -343,6 +417,7 @@ Include executive summary, analysis, recommendations, and risk factors.""",
                                 break
                     
                     if final_content:
+                        self.add_to_history("assistant", final_content)
                         yield FinalResultEvent(
                             content=final_content,
                             format="markdown",
@@ -410,29 +485,60 @@ Include executive summary, analysis, recommendations, and risk factors.""",
                     for result in msg.content:
                         call_id = getattr(result, 'call_id', 'unknown')
                         content = getattr(result, 'content', '')
-                        
-                        # Check if this is a chart result
-                        if isinstance(content, str) and ('chart' in content.lower() or '.html' in content):
-                            # Try to extract chart info from result
-                            try:
-                                import json
-                                if content.startswith('{'):
-                                    chart_data = json.loads(content)
-                                    # Check for various chart file keys
-                                    chart_path = chart_data.get('chart_file') or chart_data.get('file') or chart_data.get('path', '')
-                                    if chart_path and chart_data.get('status') == 'success':
-                                        # Extract filename from path
-                                        filename = Path(chart_path).name
-                                        yield ChartGeneratedEvent(
-                                            chart_id=call_id,
-                                            url=f"/charts/{filename}",
-                                            symbol=chart_data.get('symbol', 'unknown'),
-                                            interval=chart_data.get('interval', ''),
-                                            timestamp=datetime.now(),
-                                        )
-                                        logger.info(f"Chart generated: {filename} for {chart_data.get('symbol')}")
-                            except (json.JSONDecodeError, Exception) as e:
-                                logger.debug(f"Not a JSON chart result: {e}")
+                        chart_data = _extract_chart_data(content)
+
+                        if chart_data:
+                            chart_path = None
+                            for key in (
+                                'chart_file', 'dashboard_file', 'file',
+                                'path', 'html_file', 'report_file', 'output_path'
+                            ):
+                                candidate = chart_data.get(key)
+                                if candidate:
+                                    chart_path = candidate
+                                    break
+
+                            chart_url = chart_data.get('url')
+                            normalized_url = None
+
+                            if chart_path and chart_data.get('status') == 'success':
+                                filename = Path(chart_path).name
+                                normalized_url = chart_url or f"/charts/{filename}"
+                            elif chart_url:
+                                normalized_url = chart_url
+
+                            # Final fallback when only filename is available
+                            if not normalized_url and chart_path:
+                                filename = Path(chart_path).name
+                                normalized_url = f"/charts/{filename}"
+
+                            if normalized_url:
+                                if normalized_url.startswith('/app/outputs/charts/'):
+                                    normalized_url = normalized_url.replace('/app', '', 1)
+                                if normalized_url.startswith('/outputs/charts/'):
+                                    normalized_url = normalized_url.replace('/outputs/charts/', '/charts/', 1)
+                                if not normalized_url.startswith('/') and not normalized_url.startswith('http'):
+                                    normalized_url = f"/charts/{normalized_url}"
+
+                                timeframes = chart_data.get('timeframes')
+                                interval_value = chart_data.get('interval')
+                                if not interval_value and isinstance(timeframes, list):
+                                    interval_value = ','.join(timeframes)
+                                elif not interval_value and isinstance(timeframes, str):
+                                    interval_value = timeframes
+
+                                yield ChartGeneratedEvent(
+                                    chart_id=call_id,
+                                    url=normalized_url,
+                                    symbol=chart_data.get('symbol') or chart_data.get('symbols') or 'unknown',
+                                    interval=interval_value or '',
+                                    timestamp=datetime.now(),
+                                )
+                                logger.info(
+                                    "Chart generated: %s for %s",
+                                    normalized_url,
+                                    chart_data.get('symbol') or chart_data.get('symbols'),
+                                )
                         
                         yield ToolResultEvent(
                             tool_name=call_id,
@@ -470,6 +576,9 @@ Include executive summary, analysis, recommendations, and risk factors.""",
             "content": content,
             "timestamp": datetime.now().isoformat(),
         })
+        # Keep only the most recent 20 entries (10 user/assistant exchanges)
+        if len(self.conversation_history) > 20:
+            self.conversation_history = self.conversation_history[-20:]
     
     def clear_history(self):
         """Clear conversation history."""

@@ -3,6 +3,13 @@
  */
 
 // Chat/Conversation types
+export interface Attachment {
+  id: string;
+  label: string;
+  url: string;
+  type: "chart" | "file";
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant" | "agent" | "error";
@@ -11,6 +18,7 @@ export interface Message {
   agentName?: string;
   agentsUsed?: string[];
   charts?: ChartInfo[];
+  attachments?: Attachment[];
 }
 
 export interface Conversation {
