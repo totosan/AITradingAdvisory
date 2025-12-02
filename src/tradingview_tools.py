@@ -489,10 +489,24 @@ def generate_tradingview_chart(
             return sar;
         }}
 
-        // Interval switching (placeholder)
-        function setInterval(interval) {{
-            console.log('Switching to interval:', interval);
-            alert('Interval switch to ' + interval + ' - Reload chart with new data');
+        // Interval switching - communicate with parent frame
+        function setInterval(newInterval) {{
+            console.log('Switching to interval:', newInterval);
+            // Update button active state
+            document.querySelectorAll('.toolbar button').forEach(btn => {{
+                btn.classList.remove('active');
+                if (btn.textContent === newInterval) {{
+                    btn.classList.add('active');
+                }}
+            }});
+            // Send message to parent window (web app)
+            if (window.parent !== window) {{
+                window.parent.postMessage({{
+                    type: 'CHART_INTERVAL_CHANGE',
+                    symbol: '{symbol}',
+                    interval: newInterval
+                }}, '*');
+            }}
         }}
 
         // Load data and set chart series
