@@ -302,7 +302,7 @@ class TestFormatSimpleResult:
         
         formatted = format_simple_result(result)
         assert "BTCUSDT" in formatted
-        assert "45,000.50" in formatted
+        assert "45,000.5000" in formatted  # 4 decimal places
         assert "📈" in formatted  # Positive change emoji
     
     def test_format_success_with_negative_change(self):
@@ -316,6 +316,32 @@ class TestFormatSimpleResult:
         
         formatted = format_simple_result(result)
         assert "📉" in formatted  # Negative change emoji
+    
+    def test_format_small_price(self):
+        """Test formatting a small crypto price with more decimals."""
+        result = {
+            "success": True,
+            "results": [{"symbol": "DOGEUSDT", "data": '{"price": 0.0823, "change_24h": 1.5}'}],
+            "symbols": ["DOGEUSDT"],
+            "tool_used": "get_realtime_price",
+        }
+        
+        formatted = format_simple_result(result)
+        assert "DOGEUSDT" in formatted
+        assert "0.0823" in formatted  # 4 decimal places preserved
+    
+    def test_format_very_small_price(self):
+        """Test formatting a very small crypto price with 6 decimals."""
+        result = {
+            "success": True,
+            "results": [{"symbol": "SHIBUSDT", "data": '{"price": 0.00001234, "change_24h": -0.5}'}],
+            "symbols": ["SHIBUSDT"],
+            "tool_used": "get_realtime_price",
+        }
+        
+        formatted = format_simple_result(result)
+        assert "SHIBUSDT" in formatted
+        assert "0.000012" in formatted  # 6 decimal places for tiny prices
     
     def test_format_multiple_symbols(self):
         """Test formatting multiple symbol results."""

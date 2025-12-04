@@ -653,6 +653,21 @@ def format_simple_result(result: Dict[str, Any]) -> str:
     return _format_single_price(symbol, tool_result)
 
 
+def _format_price(price: float) -> str:
+    """
+    Format a price with appropriate decimal places.
+    
+    Uses 4 decimal places for small prices (< $1),
+    2 decimal places for larger prices.
+    """
+    if price < 0.01:
+        return f"${price:,.6f}"
+    elif price < 1:
+        return f"${price:,.4f}"
+    else:
+        return f"${price:,.4f}"
+
+
 def _format_single_price(symbol: str, data: Any) -> str:
     """Format a single price result."""
     try:
@@ -667,7 +682,7 @@ def _format_single_price(symbol: str, data: Any) -> str:
             
             if price:
                 if isinstance(price, (int, float)):
-                    output = f"💰 **{symbol}**: ${price:,.2f}"
+                    output = f"💰 **{symbol}**: {_format_price(float(price))}"
                 else:
                     output = f"💰 **{symbol}**: {price}"
                 
