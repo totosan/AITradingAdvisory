@@ -3,6 +3,9 @@ Agent Service - Wraps MagenticOne for API use.
 
 This is the critical adapter that converts the console-based
 CryptoAnalysisPlatform into a streaming API service.
+
+Includes intent detection to route simple queries (like price lookups)
+directly to tools without orchestrating the full multi-agent team.
 """
 import asyncio
 import sys
@@ -35,11 +38,15 @@ from app.models.events import (
     ToolCallEvent,
     ToolResultEvent,
     FinalResultEvent,
+    QuickResultEvent,
     ErrorEvent,
     ProgressEvent,
     ChartGeneratedEvent,
     StatusEvent,
 )
+
+# Import intent router
+from intent_router import IntentRouter, IntentType, Intent, format_simple_result
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +119,9 @@ class AgentService:
     
     Converts the Rich console output pattern used in src/main.py
     to WebSocket-friendly events for real-time frontend updates.
+    
+    Includes intent routing to optimize simple queries by executing
+    them directly without the full multi-agent orchestration.
     """
     
     def __init__(self):
@@ -120,11 +130,79 @@ class AgentService:
         self.conversation_history: List[Dict[str, str]] = []
         self._cancelled = False
         self._cancel_event = asyncio.Event()
+        
+        # Initialize intent router with tools
+        self._intent_router = IntentRouter()
+        self._tools: Dict[str, Any] = {}  # Lazy initialization
+        self._tools_initialized = False
     
     @property
     def is_cancelled(self) -> bool:
         """Check if the current task has been cancelled."""
         return self._cancelled
+    
+    def _initialize_tools(self) -> None:
+        """Initialize tools for simple intent execution."""
+        if self._tools_initialized:
+            return
+            
+        from exchange_tools import get_realtime_price, get_price_comparison
+        from crypto_tools import get_crypto_price, get_market_info
+        
+        self._tools = {
+            "get_realtime_price": get_realtime_price,
+            "get_price_comparison": get_price_comparison,
+            "get_crypto_price": get_crypto_price,
+            "get_market_info": get_market_info,
+        }
+        
+        # Register tools with the router
+        for name, func in self._tools.items():
+            self._intent_router.register_tool(name, func)
+        
+        self._tools_initialized = True
+        logger.info("Intent router tools initialized")
+    
+    async def classify_intent(self, message: str) -> Intent:
+        """
+        Classify the intent of a user message using LLM (with pattern fallback).
+        
+        Args:
+            message: The user's message
+            
+        Returns:
+            Intent object with classification
+        """
+        # Try LLM-based classification first (smarter)
+        try:
+            return await self._intent_router.classify_async(message)
+        except Exception as e:
+            logger.warning(f"LLM classification failed, using pattern fallback: {e}")
+            return self._intent_router.classify(message)
+    
+    async def _execute_simple_intent(self, message: str, intent: Intent) -> Optional[Dict[str, Any]]:
+        """
+        Execute a simple intent directly without multi-agent orchestration.
+        
+        Args:
+            message: The user's message
+            intent: The classified intent
+            
+        Returns:
+            Result dict if successful, None if should fallback to agents
+        """
+        self._initialize_tools()
+        
+        result = await self._intent_router.execute_simple(message, intent, self._tools)
+        
+        if result.get("success"):
+            return result
+        
+        if result.get("fallback_to_agents"):
+            logger.info(f"Falling back to agents: {result.get('error')}")
+            return None
+        
+        return result
     
     @property
     def model_client(self):
@@ -409,16 +487,79 @@ Include executive summary, analysis, recommendations, and risk factors.""",
         This is the key method that converts console output patterns
         to WebSocket events for real-time frontend updates.
         
+        Uses intent detection to route simple queries directly to tools
+        without orchestrating the full multi-agent team.
+        
         Args:
             message: The user's query/task
             
         Yields:
             Pydantic event models (AgentStepEvent, ToolCallEvent, etc.)
         """
-        # Note: reset_cancellation() should be called by the WebSocket handler
-        # before calling this method, but we check just in case
+        # Classify intent first (using LLM with pattern fallback)
+        intent = await self.classify_intent(message)
+        logger.info(f"Intent classified: {intent.type.value} (confidence: {intent.confidence:.2f})")
         
-        # Send initial status
+        # Handle simple intents directly
+        if intent.is_simple():
+            yield StatusEvent(
+                status="processing",
+                message="Quick lookup...",
+                timestamp=datetime.now(),
+            )
+            
+            result = await self._execute_simple_intent(message, intent)
+            
+            if result and result.get("success"):
+                # Format the result nicely
+                formatted = format_simple_result(result)
+                
+                # Add to history
+                self.add_to_history("user", message)
+                self.add_to_history("assistant", formatted)
+                
+                yield QuickResultEvent(
+                    content=formatted,
+                    symbols=result.get("symbols", []),
+                    tool_used=result.get("tool_used", ""),
+                    intent_type=intent.type.value,
+                    confidence=intent.confidence,
+                    timestamp=datetime.now(),
+                )
+                return
+            
+            # Fallback to full agent processing if simple execution failed
+            logger.info("Simple execution failed, falling back to agents")
+        
+        # Handle compound intents - execute quick component first, then full processing
+        if intent.has_quick_component():
+            logger.info(f"Compound query detected: {intent.type.value} with sub-intents {[s.value for s in intent.sub_intents]}")
+            
+            yield StatusEvent(
+                status="processing",
+                message="Fetching quick data first...",
+                timestamp=datetime.now(),
+            )
+            
+            # Execute the quick lookup component
+            quick_result = await self._execute_simple_intent(message, intent)
+            
+            if quick_result and quick_result.get("success"):
+                formatted = format_simple_result(quick_result)
+                
+                # Yield quick result first (progressive feedback)
+                yield QuickResultEvent(
+                    content=f"📊 **Quick Data:**\n{formatted}\n\n⏳ *Now processing full {intent.type.value}...*",
+                    symbols=quick_result.get("symbols", []),
+                    tool_used=quick_result.get("tool_used", ""),
+                    intent_type="compound_preview",
+                    confidence=intent.confidence,
+                    timestamp=datetime.now(),
+                )
+            
+            # Continue to full agent processing for the main intent
+        
+        # Full agent processing for complex intents
         yield StatusEvent(
             status="initializing",
             message="Initializing agent team...",

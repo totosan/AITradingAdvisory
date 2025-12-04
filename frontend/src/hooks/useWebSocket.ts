@@ -162,6 +162,20 @@ export function useWebSocket() {
         resetStatus();
         break;
       }
+      
+      case 'quick_result':
+        // Quick result from intent routing - no multi-agent processing
+        addMessage({
+          role: 'assistant',
+          content: event.content,
+          timestamp: event.timestamp,
+          agentsUsed: [], // No agents used for quick lookups
+          isQuickResult: true,
+        });
+        setProcessing(false);
+        setLoading(false);
+        resetStatus();
+        break;
         
       case 'error':
         addMessage({

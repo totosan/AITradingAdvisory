@@ -10,7 +10,7 @@ import signal
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 from autogen_agentchat.agents import AssistantAgent, CodeExecutorAgent
 from autogen_agentchat.teams import MagenticOneGroupChat
@@ -87,6 +87,7 @@ from smart_alerts import (
     generate_smart_alerts_dashboard,
     create_trade_idea_alert,
 )
+from intent_router import IntentRouter, IntentType, format_simple_result
 
 
 class CryptoAnalysisPlatform:
@@ -111,6 +112,10 @@ class CryptoAnalysisPlatform:
         self.conversation_history: List[Dict[str, str]] = []
         self.team = None  # Persistent team for conversation mode
         
+        # Initialize intent router for query classification
+        self._intent_router = IntentRouter()
+        self._init_intent_tools()
+        
         # Initialize the Azure OpenAI model client
         self.console.print(f"[cyan]Using Azure OpenAI: {config.azure_openai.deployment}[/cyan]")
         
@@ -131,6 +136,85 @@ class CryptoAnalysisPlatform:
             model=config.azure_openai.model_name,
             model_info=model_info,
         )
+    
+    def _init_intent_tools(self) -> None:
+        """Initialize tools for intent router to use for simple lookups."""
+        self._intent_router.register_tool("get_realtime_price", get_realtime_price)
+        self._intent_router.register_tool("get_price_comparison", get_price_comparison)
+        self._intent_router.register_tool("get_crypto_price", get_crypto_price)
+        self._intent_router.register_tool("get_market_info", get_market_info)
+    
+    async def _execute_simple_query(self, task: str) -> Optional[str]:
+        """
+        Try to execute a simple query directly without multi-agent orchestration.
+        
+        Uses LLM-based intent classification with pattern fallback.
+        
+        Args:
+            task: The user's query
+            
+        Returns:
+            Formatted result string if simple execution succeeded, None otherwise
+        """
+        # Use async LLM-based classification
+        try:
+            intent = await self._intent_router.classify_async(task)
+        except Exception:
+            # Fall back to pattern-based on any error
+            intent = self._intent_router.classify(task)
+        
+        if not intent.is_simple():
+            return None
+        
+        self.console.print(f"\n⚡ [dim]Quick lookup detected (confidence: {intent.confidence:.0%})[/dim]")
+        
+        result = await self._intent_router.execute_simple(task, intent)
+        
+        if result.get("success"):
+            formatted = format_simple_result(result)
+            return formatted
+        
+        return None
+    
+    async def _execute_compound_query(self, task: str) -> Optional[Tuple[str, bool]]:
+        """
+        Handle compound queries by executing quick component first.
+        
+        For queries like "What is the price of BTC and show me a chart?",
+        this will return the price immediately while signaling that
+        full agent processing should continue.
+        
+        Args:
+            task: The user's query
+            
+        Returns:
+            Tuple of (quick_result, should_continue) or None if not a compound query
+        """
+        # Use async LLM-based classification
+        try:
+            intent = await self._intent_router.classify_async(task)
+        except Exception:
+            intent = self._intent_router.classify(task)
+        
+        if not intent.has_quick_component():
+            return None
+        
+        # It's a compound query with a quick lookup component
+        self.console.print(f"\n🔀 [dim]Compound query detected: {intent.type.value} + quick data[/dim]")
+        
+        result = await self._intent_router.execute_simple(task, intent)
+        
+        if result.get("success"):
+            formatted = format_simple_result(result)
+            self.console.print(Panel(
+                formatted,
+                title="📊 Quick Data",
+                border_style="green",
+            ))
+            self.console.print(f"\n⏳ [dim]Now processing full {intent.type.value}...[/dim]\n")
+            return (formatted, True)  # Continue to full agent processing
+        
+        return None
     
     async def _process_stream_minimal(self, stream) -> TaskResult:
         """
@@ -1002,6 +1086,30 @@ Specialized cryptocurrency analysis with:
             f"[bold cyan]Task:[/bold cyan]\n{task}",
             border_style="cyan"
         ))
+        
+        # Try simple intent execution first
+        simple_result = await self._execute_simple_query(task)
+        if simple_result:
+            self.console.print("\n" + "─" * 60)
+            self.console.print("[bold green]✅ Quick Answer:[/bold green]\n")
+            self.console.print(Markdown(simple_result))
+            
+            # Store in conversation history
+            if conversation_mode:
+                self.conversation_history.append({
+                    "task": task,
+                    "answer": simple_result,
+                    "timestamp": datetime.now().isoformat(),
+                })
+            
+            return simple_result
+        
+        # Try compound query - execute quick component first, then continue
+        compound_result = await self._execute_compound_query(task)
+        # compound_result is (quick_result, should_continue) or None
+        # If compound, we already displayed quick data and continue to full processing
+        
+        # Full agent processing for complex queries
         
         # In conversation mode, build context from history
         if conversation_mode and self.conversation_history:

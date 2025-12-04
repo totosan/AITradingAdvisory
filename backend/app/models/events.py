@@ -57,6 +57,17 @@ class FinalResultEvent(BaseModel):
     timestamp: datetime
 
 
+class QuickResultEvent(BaseModel):
+    """Event for quick/simple lookup results (no multi-agent processing)."""
+    type: Literal["quick_result"] = "quick_result"
+    content: str
+    symbols: List[str]  # All symbols that were looked up
+    tool_used: str
+    intent_type: str
+    confidence: float
+    timestamp: datetime
+
+
 class ErrorEvent(BaseModel):
     """Event when an error occurs."""
     type: Literal["error"] = "error"
@@ -120,6 +131,7 @@ ServerEvent = (
     ToolResultEvent | 
     ChartGeneratedEvent | 
     FinalResultEvent | 
+    QuickResultEvent |
     ErrorEvent | 
     ProgressEvent |
     StatusEvent

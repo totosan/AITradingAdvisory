@@ -9,6 +9,7 @@ export type EventType =
   | "tool_result"
   | "chart"
   | "result"
+  | "quick_result"
   | "error"
   | "progress";
 
@@ -61,6 +62,16 @@ export interface ResultEvent {
   timestamp: string;
 }
 
+export interface QuickResultEvent {
+  type: "quick_result";
+  content: string;
+  symbols: string[];  // All symbols that were looked up
+  tool_used: string;
+  intent_type: string;
+  confidence: number;
+  timestamp: string;
+}
+
 export interface ErrorEvent {
   type: "error";
   message: string;
@@ -84,6 +95,7 @@ export type ServerEvent =
   | ToolResultEvent
   | ChartEvent
   | ResultEvent
+  | QuickResultEvent
   | ErrorEvent
   | ProgressEvent;
 

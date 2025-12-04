@@ -19,6 +19,7 @@ export interface Message {
   agentsUsed?: string[];
   charts?: ChartInfo[];
   attachments?: Attachment[];
+  isQuickResult?: boolean;  // True if this was a quick lookup (no multi-agent)
 }
 
 export interface Conversation {
