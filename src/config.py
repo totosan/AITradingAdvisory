@@ -33,8 +33,12 @@ class BitgetConfig:
 @dataclass
 class ExchangeConfig:
     """Configuration for exchange providers."""
-    # Default provider to use: 'bitget' or 'coingecko'
-    default_provider: str = "coingecko"
+    # Default provider to use: 'bitget' (recommended) or 'coingecko'
+    default_provider: str = "bitget"
+    # Enable automatic fallback when default provider fails
+    fallback_enabled: bool = True
+    # Fallback provider (used when default fails)
+    fallback_provider: str = "coingecko"
     # Enable Bitget provider
     enable_bitget: bool = True
     # Enable CoinGecko provider (for comparison/fallback)
@@ -46,7 +50,9 @@ class ExchangeConfig:
     def from_env(cls) -> "ExchangeConfig":
         """Create configuration from environment variables."""
         return cls(
-            default_provider=os.getenv("EXCHANGE_DEFAULT_PROVIDER", "coingecko"),
+            default_provider=os.getenv("EXCHANGE_DEFAULT_PROVIDER", "bitget"),
+            fallback_enabled=os.getenv("EXCHANGE_FALLBACK_ENABLED", "true").lower() == "true",
+            fallback_provider=os.getenv("EXCHANGE_FALLBACK_PROVIDER", "coingecko"),
             enable_bitget=os.getenv("EXCHANGE_ENABLE_BITGET", "true").lower() == "true",
             enable_coingecko=os.getenv("EXCHANGE_ENABLE_COINGECKO", "true").lower() == "true",
             bitget=BitgetConfig.from_env(),

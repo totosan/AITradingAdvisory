@@ -5,25 +5,32 @@ This module provides a unified interface for managing multiple exchange
 providers and aggregating data across platforms. It enables easy switching
 between providers and comparison of prices across exchanges.
 
+**Default Behavior:**
+- Bitget is the PRIMARY provider for real-time data
+- CoinGecko is the FALLBACK provider (used when Bitget fails or for unsupported coins)
+- Explicit provider selection always takes precedence
+
 Usage:
     from exchange_providers import ExchangeManager, ProviderType
     from exchange_providers import CoinGeckoProvider, BitgetProvider
     
     manager = ExchangeManager()
-    manager.register_provider(ProviderType.COINGECKO, CoinGeckoProvider())
     manager.register_provider(ProviderType.BITGET, BitgetProvider.from_env())
+    manager.register_provider(ProviderType.COINGECKO, CoinGeckoProvider())
     
-    # Get ticker from specific provider
-    ticker = manager.get_ticker("BTCUSDT", provider=ProviderType.BITGET)
-    
-    # Get ticker from default provider
+    # Get ticker from default provider (Bitget, with fallback to CoinGecko)
     ticker = manager.get_ticker("BTCUSDT")
+    
+    # Get ticker from specific provider (no fallback)
+    ticker = manager.get_ticker("bitcoin", provider=ProviderType.COINGECKO)
     
     # Compare prices across providers
     comparison = manager.compare_prices("BTCUSDT")
 """
 
 import json
+import os
+import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union
 
@@ -37,6 +44,46 @@ from .base import (
     AccountBalance,
 )
 
+logger = logging.getLogger(__name__)
+
+
+# Symbol mapping: CoinGecko IDs → Bitget trading pairs
+COINGECKO_TO_BITGET_MAP = {
+    "bitcoin": "BTCUSDT",
+    "ethereum": "ETHUSDT",
+    "solana": "SOLUSDT",
+    "sui": "SUIUSDT",
+    "ripple": "XRPUSDT",
+    "cardano": "ADAUSDT",
+    "dogecoin": "DOGEUSDT",
+    "polkadot": "DOTUSDT",
+    "avalanche-2": "AVAXUSDT",
+    "chainlink": "LINKUSDT",
+    "polygon": "MATICUSDT",
+    "litecoin": "LTCUSDT",
+    "uniswap": "UNIUSDT",
+    "cosmos": "ATOMUSDT",
+    "stellar": "XLMUSDT",
+    "near": "NEARUSDT",
+    "aptos": "APTUSDT",
+    "arbitrum": "ARBUSDT",
+    "optimism": "OPUSDT",
+    "injective-protocol": "INJUSDT",
+    "render-token": "RNDR USDT",
+    "filecoin": "FILUSDT",
+    "hedera-hashgraph": "HBARUSDT",
+    "tron": "TRXUSDT",
+    "the-graph": "GRTUSDT",
+    "aave": "AAVEUSDT",
+    "maker": "MKRUSDT",
+    "pepe": "PEPEUSDT",
+    "shiba-inu": "SHIBUSDT",
+    "bonk": "BONKUSDT",
+}
+
+# Reverse mapping: Bitget pairs → CoinGecko IDs
+BITGET_TO_COINGECKO_MAP = {v: k for k, v in COINGECKO_TO_BITGET_MAP.items()}
+
 
 class ExchangeManager:
     """
@@ -44,29 +91,61 @@ class ExchangeManager:
     
     Features:
     - Register and manage multiple exchange providers
-    - Set default provider for operations
-    - Get data from specific provider or aggregate from all
+    - Bitget as default provider with automatic fallback to CoinGecko
+    - Get data from specific provider or use smart fallback
     - Compare prices across exchanges
-    - Automatic fallback to alternative providers on failure
+    - Automatic symbol normalization between providers
+    
+    **Default Behavior:**
+    - Bitget is the PRIMARY provider (best for real-time trading data)
+    - CoinGecko is the FALLBACK provider (broader coin coverage)
+    - When user explicitly requests a provider, no fallback is used
     
     Usage:
         manager = ExchangeManager()
         manager.register_provider(ProviderType.BITGET, BitgetProvider.from_env())
-        manager.set_default_provider(ProviderType.BITGET)
+        manager.register_provider(ProviderType.COINGECKO, CoinGeckoProvider())
         
-        # All subsequent calls use Bitget unless specified otherwise
+        # Uses Bitget by default, falls back to CoinGecko on failure
         ticker = manager.get_ticker("BTCUSDT")
+        
+        # Explicit provider selection (no fallback)
+        ticker = manager.get_ticker("bitcoin", provider=ProviderType.COINGECKO)
     """
     
-    def __init__(self, default_provider: Optional[ProviderType] = None):
+    def __init__(
+        self,
+        default_provider: Optional[ProviderType] = None,
+        fallback_enabled: bool = True,
+        fallback_provider: Optional[ProviderType] = None,
+    ):
         """
         Initialize the exchange manager.
         
         Args:
-            default_provider: Initial default provider type
+            default_provider: Initial default provider type (defaults to BITGET)
+            fallback_enabled: Whether to enable automatic fallback
+            fallback_provider: Provider to use as fallback (defaults to COINGECKO)
         """
         self._providers: Dict[ProviderType, ExchangeProvider] = {}
-        self._default_provider: Optional[ProviderType] = default_provider
+        
+        # Load from environment or use provided values
+        env_default = os.getenv("EXCHANGE_DEFAULT_PROVIDER", "bitget").lower()
+        env_fallback_enabled = os.getenv("EXCHANGE_FALLBACK_ENABLED", "true").lower() == "true"
+        
+        # Set default provider preference (Bitget first!)
+        if default_provider is not None:
+            self._default_provider = default_provider
+        elif env_default == "bitget":
+            self._default_provider = ProviderType.BITGET
+        elif env_default == "coingecko":
+            self._default_provider = ProviderType.COINGECKO
+        else:
+            self._default_provider = ProviderType.BITGET  # Bitget as ultimate default
+        
+        # Fallback configuration
+        self._fallback_enabled = fallback_enabled and env_fallback_enabled
+        self._fallback_provider = fallback_provider or ProviderType.COINGECKO
     
     # ==================== Provider Management ====================
     
@@ -156,6 +235,122 @@ class ExchangeManager:
         """Get list of registered provider types."""
         return list(self._providers.keys())
     
+    @property
+    def fallback_enabled(self) -> bool:
+        """Check if fallback is enabled."""
+        return self._fallback_enabled
+    
+    @fallback_enabled.setter
+    def fallback_enabled(self, value: bool) -> None:
+        """Enable or disable fallback."""
+        self._fallback_enabled = value
+    
+    @property
+    def fallback_provider(self) -> Optional[ProviderType]:
+        """Get the fallback provider type."""
+        return self._fallback_provider
+    
+    def normalize_symbol(
+        self,
+        symbol: str,
+        target_provider: ProviderType,
+    ) -> str:
+        """
+        Normalize symbol for a specific provider.
+        
+        Converts between CoinGecko IDs (e.g., 'bitcoin') and
+        Bitget trading pairs (e.g., 'BTCUSDT').
+        
+        Args:
+            symbol: Input symbol in any format
+            target_provider: Provider to normalize for
+            
+        Returns:
+            Symbol in correct format for target provider
+        """
+        symbol_lower = symbol.lower()
+        symbol_upper = symbol.upper()
+        
+        if target_provider == ProviderType.BITGET:
+            # Convert CoinGecko ID to Bitget pair
+            if symbol_lower in COINGECKO_TO_BITGET_MAP:
+                return COINGECKO_TO_BITGET_MAP[symbol_lower]
+            # Already in Bitget format or unknown
+            return symbol_upper if not symbol_upper.endswith("USDT") else symbol_upper
+        
+        elif target_provider == ProviderType.COINGECKO:
+            # Convert Bitget pair to CoinGecko ID
+            if symbol_upper in BITGET_TO_COINGECKO_MAP:
+                return BITGET_TO_COINGECKO_MAP[symbol_upper]
+            # Already in CoinGecko format or unknown
+            return symbol_lower
+        
+        return symbol
+    
+    def _get_with_fallback(
+        self,
+        operation: str,
+        symbol: str,
+        provider: Optional[ProviderType],
+        **kwargs,
+    ) -> Any:
+        """
+        Execute an operation with automatic fallback on failure.
+        
+        Args:
+            operation: Method name to call on provider (e.g., 'get_ticker')
+            symbol: Trading symbol
+            provider: Explicitly requested provider (no fallback if set)
+            **kwargs: Additional arguments for the operation
+            
+        Returns:
+            Result from successful provider call
+            
+        Raises:
+            Exception: If all providers fail
+        """
+        # If explicit provider requested, use it without fallback
+        if provider is not None:
+            target_provider = self.get_provider(provider)
+            normalized_symbol = self.normalize_symbol(symbol, provider)
+            method = getattr(target_provider, operation)
+            return method(normalized_symbol, **kwargs)
+        
+        # Try default provider first (Bitget)
+        default_pt = self._default_provider or ProviderType.BITGET
+        errors = []
+        
+        if default_pt in self._providers:
+            try:
+                target_provider = self._providers[default_pt]
+                normalized_symbol = self.normalize_symbol(symbol, default_pt)
+                method = getattr(target_provider, operation)
+                result = method(normalized_symbol, **kwargs)
+                logger.debug(f"Successfully fetched {operation} for {symbol} from {default_pt.value}")
+                return result
+            except Exception as e:
+                errors.append(f"{default_pt.value}: {str(e)}")
+                logger.warning(f"Default provider {default_pt.value} failed for {symbol}: {e}")
+        
+        # Fallback to secondary provider if enabled
+        if self._fallback_enabled and self._fallback_provider in self._providers:
+            fallback_pt = self._fallback_provider
+            if fallback_pt != default_pt:  # Don't retry same provider
+                try:
+                    target_provider = self._providers[fallback_pt]
+                    normalized_symbol = self.normalize_symbol(symbol, fallback_pt)
+                    method = getattr(target_provider, operation)
+                    result = method(normalized_symbol, **kwargs)
+                    logger.info(f"Fallback to {fallback_pt.value} succeeded for {symbol}")
+                    return result
+                except Exception as e:
+                    errors.append(f"{fallback_pt.value}: {str(e)}")
+                    logger.warning(f"Fallback provider {fallback_pt.value} also failed: {e}")
+        
+        # All providers failed
+        error_msg = f"All providers failed for {operation}({symbol}): " + "; ".join(errors)
+        raise RuntimeError(error_msg)
+    
     # ==================== Market Data Operations ====================
     
     def get_ticker(
@@ -164,16 +359,19 @@ class ExchangeManager:
         provider: Optional[ProviderType] = None,
     ) -> TickerData:
         """
-        Get ticker data from a specific or default provider.
+        Get ticker data with automatic fallback.
+        
+        Uses Bitget by default, falls back to CoinGecko if Bitget fails.
+        If provider is explicitly specified, no fallback is used.
         
         Args:
             symbol: Trading pair or coin symbol
-            provider: Specific provider to use (optional)
+            provider: Specific provider to use (optional, no fallback if set)
             
         Returns:
-            TickerData from the specified provider
+            TickerData from the provider
         """
-        return self.get_provider(provider).get_ticker(symbol)
+        return self._get_with_fallback("get_ticker", symbol, provider)
     
     def get_candles(
         self,
@@ -185,21 +383,25 @@ class ExchangeManager:
         end_time: Optional[datetime] = None,
     ) -> List[CandleData]:
         """
-        Get candlestick data from a specific or default provider.
+        Get candlestick data with automatic fallback.
+        
+        Uses Bitget by default for real-time candle data.
         
         Args:
             symbol: Trading pair or coin symbol
             interval: Candle interval
             limit: Maximum candles to return
-            provider: Specific provider to use (optional)
+            provider: Specific provider to use (optional, no fallback if set)
             start_time: Start time for historical data
             end_time: End time for historical data
             
         Returns:
             List of CandleData objects
         """
-        return self.get_provider(provider).get_candles(
-            symbol, interval, limit, start_time, end_time
+        return self._get_with_fallback(
+            "get_candles", symbol, provider,
+            interval=interval, limit=limit,
+            start_time=start_time, end_time=end_time
         )
     
     def get_orderbook(
@@ -211,15 +413,21 @@ class ExchangeManager:
         """
         Get order book from a provider that supports it.
         
+        Note: Order book is only available from Bitget (not CoinGecko).
+        No fallback is used for this operation.
+        
         Args:
             symbol: Trading pair
             limit: Number of levels
-            provider: Specific provider to use (optional)
+            provider: Specific provider to use (defaults to Bitget)
             
         Returns:
             OrderBookData with bids and asks
         """
-        return self.get_provider(provider).get_orderbook(symbol, limit)
+        # Order book is Bitget-specific, no fallback
+        target = provider or ProviderType.BITGET
+        normalized_symbol = self.normalize_symbol(symbol, target)
+        return self.get_provider(target).get_orderbook(normalized_symbol, limit)
     
     def get_recent_trades(
         self,
@@ -230,15 +438,21 @@ class ExchangeManager:
         """
         Get recent trades from a provider that supports it.
         
+        Note: Recent trades is only available from Bitget (not CoinGecko).
+        No fallback is used for this operation.
+        
         Args:
             symbol: Trading pair
             limit: Maximum trades to return
-            provider: Specific provider to use (optional)
+            provider: Specific provider to use (defaults to Bitget)
             
         Returns:
             List of TradeData objects
         """
-        return self.get_provider(provider).get_recent_trades(symbol, limit)
+        # Recent trades is Bitget-specific, no fallback
+        target = provider or ProviderType.BITGET
+        normalized_symbol = self.normalize_symbol(symbol, target)
+        return self.get_provider(target).get_recent_trades(normalized_symbol, limit)
     
     # ==================== Aggregation Operations ====================
     
@@ -375,14 +589,16 @@ def create_exchange_manager(
     include_coingecko: bool = True,
     include_bitget: bool = True,
     default_provider: Optional[ProviderType] = None,
+    fallback_enabled: bool = True,
 ) -> ExchangeManager:
     """
-    Create a pre-configured ExchangeManager.
+    Create a pre-configured ExchangeManager with Bitget as default.
     
     Args:
         include_coingecko: Register CoinGecko provider
         include_bitget: Register Bitget provider (from env vars)
-        default_provider: Set as default provider
+        default_provider: Override default provider (defaults to BITGET)
+        fallback_enabled: Enable automatic fallback to CoinGecko
         
     Returns:
         Configured ExchangeManager instance
@@ -390,15 +606,35 @@ def create_exchange_manager(
     from .coingecko_provider import CoinGeckoProvider
     from .bitget_provider import BitgetProvider
     
-    manager = ExchangeManager()
+    manager = ExchangeManager(
+        default_provider=default_provider,
+        fallback_enabled=fallback_enabled,
+    )
     
+    # Register Bitget FIRST (as primary provider)
+    if include_bitget:
+        try:
+            bitget = BitgetProvider.from_env()
+            manager.register_provider(ProviderType.BITGET, bitget)
+            logger.info(f"Bitget provider registered (authenticated: {bitget.is_authenticated})")
+        except Exception as e:
+            logger.warning(f"Could not initialize Bitget provider: {e}")
+    
+    # Register CoinGecko as fallback
     if include_coingecko:
         manager.register_provider(ProviderType.COINGECKO, CoinGeckoProvider())
+        logger.info("CoinGecko provider registered (fallback)")
     
-    if include_bitget:
-        manager.register_provider(ProviderType.BITGET, BitgetProvider.from_env())
-    
+    # Set default to Bitget if available, otherwise CoinGecko
     if default_provider:
-        manager.set_default_provider(default_provider)
+        try:
+            manager.set_default_provider(default_provider)
+        except ValueError:
+            pass  # Provider not available
+    elif ProviderType.BITGET in manager.available_providers:
+        manager.set_default_provider(ProviderType.BITGET)
+    elif ProviderType.COINGECKO in manager.available_providers:
+        manager.set_default_provider(ProviderType.COINGECKO)
     
+    logger.info(f"ExchangeManager ready: default={manager.default_provider}, fallback={manager.fallback_enabled}")
     return manager

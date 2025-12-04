@@ -5,6 +5,11 @@ This module provides tool functions that agents can use to interact with
 cryptocurrency exchanges. It wraps the ExchangeManager to provide
 Annotated function signatures compatible with function calling.
 
+**DEFAULT BEHAVIOR:**
+- All tools use Bitget as the PRIMARY data source
+- CoinGecko is used as automatic FALLBACK when Bitget fails
+- Users can explicitly request a specific provider when needed
+
 Tools:
 - get_realtime_price: Get real-time price from Bitget (or fallback)
 - get_price_comparison: Compare prices across multiple exchanges
@@ -16,6 +21,7 @@ Tools:
 """
 
 import json
+import logging
 from datetime import datetime, timedelta
 from typing import Annotated, Optional, List, Literal
 
@@ -26,6 +32,7 @@ from exchange_providers import (
     BitgetProvider,
 )
 
+logger = logging.getLogger(__name__)
 
 # Global exchange manager instance
 _exchange_manager: Optional[ExchangeManager] = None
@@ -35,30 +42,44 @@ def get_exchange_manager() -> ExchangeManager:
     """
     Get or create the global exchange manager instance.
     
+    The manager is configured with:
+    - Bitget as PRIMARY provider (real-time data, order books, futures)
+    - CoinGecko as FALLBACK provider (broad coin coverage)
+    - Automatic fallback enabled by default
+    
     Returns:
-        Configured ExchangeManager
+        Configured ExchangeManager with Bitget as default
     """
     global _exchange_manager
     
     if _exchange_manager is None:
-        _exchange_manager = ExchangeManager()
+        _exchange_manager = ExchangeManager(
+            default_provider=ProviderType.BITGET,
+            fallback_enabled=True,
+            fallback_provider=ProviderType.COINGECKO,
+        )
         
-        # Register CoinGecko (always available, no auth needed)
+        # Register Bitget FIRST (primary provider)
+        try:
+            bitget = BitgetProvider.from_env()
+            _exchange_manager.register_provider(ProviderType.BITGET, bitget)
+            logger.info(f"Bitget provider registered (authenticated: {bitget.is_authenticated})")
+        except Exception as e:
+            logger.warning(f"Could not initialize Bitget provider: {e}")
+        
+        # Register CoinGecko as fallback
         _exchange_manager.register_provider(
             ProviderType.COINGECKO,
             CoinGeckoProvider()
         )
+        logger.info("CoinGecko provider registered (fallback)")
         
-        # Register Bitget (from environment variables)
-        try:
-            bitget = BitgetProvider.from_env()
-            _exchange_manager.register_provider(ProviderType.BITGET, bitget)
-            
-            # Set Bitget as default if authenticated
-            if bitget.is_authenticated:
-                _exchange_manager.set_default_provider(ProviderType.BITGET)
-        except Exception:
-            pass  # Bitget not configured, continue with CoinGecko only
+        # Ensure Bitget is default if available
+        if ProviderType.BITGET in _exchange_manager.available_providers:
+            _exchange_manager.set_default_provider(ProviderType.BITGET)
+            logger.info("Default provider set to Bitget")
+        else:
+            logger.warning("Bitget not available, using CoinGecko as default")
     
     return _exchange_manager
 
@@ -74,24 +95,31 @@ def reset_exchange_manager() -> None:
 
 def get_realtime_price(
     symbol: Annotated[str, "Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT', 'bitcoin')"],
-    provider: Annotated[Optional[str], "Exchange provider: 'bitget' or 'coingecko' (optional)"] = None,
+    provider: Annotated[Optional[str], "Exchange provider: 'bitget' (default), 'coingecko', or 'auto' (Bitget with fallback)"] = None,
 ) -> str:
     """
     Get real-time price and market data for a cryptocurrency.
     
-    This tool fetches current market data including price, 24h change,
-    volume, and bid/ask spread (when available from Bitget).
+    **DEFAULT: Uses Bitget for real-time trading data.**
+    Falls back to CoinGecko automatically if Bitget fails.
+    
+    Use CoinGecko explicitly only when:
+    - User specifically requests it
+    - Coin is not available on Bitget
     
     Args:
         symbol: Trading pair (e.g., 'BTCUSDT') or coin ID (e.g., 'bitcoin')
-        provider: Specific provider to use (optional, uses default if not set)
+        provider: 'bitget' (default), 'coingecko', or None for auto (Bitget + fallback)
         
     Returns:
         JSON string with current price and market data
         
     Example:
-        >>> get_realtime_price("BTCUSDT", provider="bitget")
+        >>> get_realtime_price("BTCUSDT")  # Uses Bitget
         '{"symbol": "BTCUSDT", "price": 95000.50, "change_24h": 2.5, ...}'
+        
+        >>> get_realtime_price("bitcoin", provider="coingecko")  # Explicit CoinGecko
+        '{"symbol": "bitcoin", "price": 95000.00, ...}'
     """
     try:
         manager = get_exchange_manager()

@@ -340,23 +340,38 @@ Specialized cryptocurrency analysis with:
                 
                 Work with TechnicalAnalyst to design indicators and CryptoAnalysisCoder to implement them!
                 
-                **DATA SOURCES AVAILABLE:**
+                ═══════════════════════════════════════════════════════════════════
+                ⚠️  DATA SOURCE PRIORITY - ALWAYS USE BITGET FIRST!
+                ═══════════════════════════════════════════════════════════════════
                 
-                🦎 CoinGecko Tools (broad market data, 10,000+ coins):
-                - get_crypto_price(symbol) - Get current price (use coin IDs like 'bitcoin', 'ethereum')
-                - get_market_info(symbol) - Get detailed market information
-                - get_historical_data(symbol, days) - Get price history for trend analysis
+                🔶 **PRIMARY: Bitget Exchange** (ALWAYS use first!)
+                   Real-time trading data, order books, futures, best for active trading
+                   Symbol format: 'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'SUIUSDT'
+                   
+                   Tools (USE THESE BY DEFAULT):
+                   - get_realtime_price(symbol) - Real-time price with bid/ask spread
+                   - get_orderbook_depth(symbol, levels) - Order book depth analysis
+                   - get_recent_market_trades(symbol, limit) - Recent trade flow
+                   - get_ohlcv_data(symbol, interval, limit) - Candlestick data
+                   - get_futures_data(symbol) - Funding rate, open interest
+                   - check_exchange_status() - Verify Bitget connection
                 
-                🔶 Bitget Exchange Tools (real-time trading data):
-                - get_realtime_price(symbol, provider) - Real-time price (use pairs like 'BTCUSDT', 'ETHUSDT')
-                - get_price_comparison(symbol) - Compare prices across Bitget and CoinGecko
-                - get_orderbook_depth(symbol, levels) - Order book with bid/ask levels
-                - get_recent_market_trades(symbol, limit) - Recent trade history
-                - check_exchange_status() - Check which exchanges are connected
+                🦎 **FALLBACK: CoinGecko** (only when explicitly requested or Bitget unavailable)
+                   Use CoinGecko ONLY when:
+                   - User explicitly says "use CoinGecko" or "from CoinGecko"
+                   - Coin is not listed on Bitget (rare altcoins)
+                   - Need market cap ranking data
+                   Symbol format: 'bitcoin', 'ethereum', 'solana', 'sui'
+                   
+                   Tools (USE ONLY WHEN NEEDED):
+                   - get_crypto_price(symbol) - Basic price data
+                   - get_market_info(symbol) - Market cap, ranking
+                   - get_historical_data(symbol, days) - Long-term history
                 
-                **SYMBOL FORMATS:**
-                - CoinGecko: lowercase coin IDs → 'bitcoin', 'ethereum', 'solana', 'sui'
-                - Bitget: trading pairs with USDT → 'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'SUIUSDT'
+                📊 **PRICE COMPARISON** (for arbitrage analysis):
+                   - get_price_comparison(symbol) - Compare Bitget vs CoinGecko prices
+                
+                ═══════════════════════════════════════════════════════════════════
                 
                 Always provide clear, data-driven insights with specific numbers.
                 When standard analysis is insufficient, propose custom indicator concepts!""",
@@ -412,23 +427,31 @@ Specialized cryptocurrency analysis with:
                 - False positive/negative rates
                 - Performance across different market conditions
                 
-                **DATA SOURCES AVAILABLE:**
+                ═══════════════════════════════════════════════════════════════════
+                ⚠️  DATA SOURCE PRIORITY - ALWAYS USE BITGET FIRST!
+                ═══════════════════════════════════════════════════════════════════
                 
-                🦎 CoinGecko Tools (historical data, charting):
-                - create_crypto_chart(symbol, days, indicators) - Generate charts (coin IDs: 'bitcoin', 'ethereum')
-                - get_historical_data(symbol, days) - Get price data for calculations
+                🔶 **PRIMARY: Bitget Exchange** (ALWAYS use first for OHLCV data!)
+                   Best for: Real-time candles, futures data, order book analysis
+                   Symbol format: 'BTCUSDT', 'ETHUSDT', 'SOLUSDT'
+                   
+                   Tools (USE THESE BY DEFAULT):
+                   - get_ohlcv_data(symbol, interval, limit) - Candlestick data
+                     Intervals: '1m', '5m', '15m', '1H', '4H', '1D', '1W'
+                   - get_futures_data(symbol) - Funding rate, open interest, mark price
+                   - get_futures_candles(symbol, interval, limit) - Futures OHLCV
+                   - get_orderbook_depth(symbol, levels) - S/R from order book
+                   - get_realtime_price(symbol) - Current price with spread
                 
-                🔶 Bitget Exchange Tools (real-time OHLCV, futures):
-                - get_ohlcv_data(symbol, interval, limit) - Candlestick data (pairs: 'BTCUSDT', 'ETHUSDT')
-                  Intervals: '1m', '5m', '15m', '1H', '4H', '1D', '1W'
-                - get_futures_data(symbol) - Futures info: funding rate, open interest, mark price
-                - get_futures_candles(symbol, interval, limit) - Futures OHLCV data
-                - get_orderbook_depth(symbol, levels) - Order book for support/resistance
+                🦎 **FALLBACK: CoinGecko** (only when user requests or for charting)
+                   Use only when: User explicitly requests, or for legacy charts
+                   Symbol format: 'bitcoin', 'ethereum', 'solana'
+                   
+                   Tools:
+                   - create_crypto_chart(symbol, days, indicators) - Generate charts
+                   - get_historical_data(symbol, days) - Long-term history only
                 
-                **SYMBOL FORMATS:**
-                - CoinGecko: lowercase coin IDs → 'bitcoin', 'ethereum', 'solana'
-                - Bitget Spot: pairs → 'BTCUSDT', 'ETHUSDT', 'SOLUSDT'
-                - Bitget Futures: same pairs → 'BTCUSDT', 'ETHUSDT'
+                ═══════════════════════════════════════════════════════════════════
                 
                 Technical Analysis Guidelines:
                 - RSI < 30 = Oversold (potential buy)
