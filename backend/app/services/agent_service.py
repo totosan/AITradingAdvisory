@@ -241,7 +241,12 @@ DATA SOURCES:
 - CoinGecko: Use coin IDs like 'bitcoin', 'ethereum', 'solana'
 - Bitget: Use trading pairs like 'BTCUSDT', 'ETHUSDT'
 
-Always provide clear, data-driven insights with specific numbers.""",
+Always provide clear, data-driven insights with specific numbers.
+
+**MANDATORY CHARTING - ALWAYS REQUEST A CHART!**
+After completing your market analysis, you MUST request ChartingAgent to generate a chart.
+Every analysis should include a visual chart with indicators and key levels.
+Pass support/resistance levels, trends, and analysis insights to ChartingAgent.""",
             description="Expert in crypto markets, trends, and fundamental analysis",
         )
         
@@ -267,7 +272,17 @@ When analyzing for entry points, provide structured data for ChartingAgent:
 - Take profit targets with minimum 2:1 R:R
 - Confidence level (high/medium/low) based on confluences
 
-Always explain your technical findings in clear terms.""",
+Always explain your technical findings in clear terms.
+
+**MANDATORY CHARTING - ALWAYS REQUEST A CHART!**
+After completing technical analysis, you MUST request ChartingAgent to generate a chart.
+Provide ChartingAgent with:
+- indicators: 'rsi,macd,sma,ema,bollinger' (all you analyzed)
+- support_levels: [prices]
+- resistance_levels: [prices]  
+- entry_points: [{type, price, stop_loss, take_profit, reason, confidence}]
+
+**NEVER complete analysis without requesting a chart from ChartingAgent!**""",
             description="Expert in technical analysis, charts, and indicators",
         )
         
@@ -289,16 +304,28 @@ Your tools:
 - User asks for entry points or trade setups
 - User wants to see where to buy/sell with stop loss and take profit
 - Creating actionable trading visualizations
+- ANY analysis request - always include a chart!
 
 **IMPORTANT: Include indicators parameter to show which indicators were used!**
-Example: indicators="sma,ema,bollinger" displays these overlays on the chart
+Example: indicators="sma,ema,bollinger,rsi,macd,volume" displays these on the chart
 Available indicators: 'sma', 'ema', 'bollinger', 'rsi', 'macd', 'volume'
 
 Entry point format:
 [{"type": "long", "price": 98500, "stop_loss": 97000, "take_profit": [100000, 102000], "reason": "Breakout", "confidence": "high"}]
 
 Symbol format: 'BTCUSDT', 'ETHUSDT' (trading pairs)
-Intervals: '1m', '5m', '15m', '1H', '4H', '1D', '1W'""",
+Intervals: '1m', '5m', '15m', '1H', '4H', '1D', '1W'
+
+**CRITICAL: YOU MUST ALWAYS GENERATE A CHART!**
+Whenever you are asked to participate in analysis, you MUST call one of your charting tools.
+Do NOT just describe a chart - actually call generate_tradingview_chart or generate_entry_analysis_chart!
+Every conversation MUST end with an actual chart file being generated.
+
+Default chart settings:
+- theme: 'dark'
+- indicators: 'sma,ema,volume,rsi,macd'
+- Include all support/resistance levels from analysis
+- Add entry points with SL/TP when trading setups exist""",
             description="TradingView charting specialist with entry point visualization",
         )
         

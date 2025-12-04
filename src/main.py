@@ -374,7 +374,28 @@ Specialized cryptocurrency analysis with:
                 ═══════════════════════════════════════════════════════════════════
                 
                 Always provide clear, data-driven insights with specific numbers.
-                When standard analysis is insufficient, propose custom indicator concepts!""",
+                When standard analysis is insufficient, propose custom indicator concepts!
+                
+                ═══════════════════════════════════════════════════════════════════
+                🎨 MANDATORY CHARTING - ALWAYS VISUALIZE YOUR ANALYSIS!
+                ═══════════════════════════════════════════════════════════════════
+                
+                **CRITICAL: You MUST always request a chart from ChartingAgent!**
+                Every analysis you perform should be accompanied by a visual chart.
+                
+                After completing your market analysis:
+                1. Summarize key price levels, trends, and insights
+                2. Request ChartingAgent to create a chart with your findings
+                3. Include relevant indicators and annotations
+                
+                Example handoff to ChartingAgent:
+                "ChartingAgent, please generate an entry analysis chart for BTCUSDT with:
+                - Indicators: sma, ema, volume, rsi
+                - Support levels: [95000, 92000]
+                - Resistance levels: [100000, 105000]
+                - Entry points based on my analysis"
+                
+                **Never finish an analysis without a chart!**""",
                 description="Expert in crypto markets, trends, fundamental analysis, and custom indicator design",
             )
             
@@ -483,7 +504,36 @@ Specialized cryptocurrency analysis with:
                 ```
                 
                 Always explain your technical findings in clear terms.
-                When proposing custom indicators, explain the logic and expected edge.""",
+                When proposing custom indicators, explain the logic and expected edge.
+                
+                ═══════════════════════════════════════════════════════════════════
+                🎨 MANDATORY CHARTING - ALWAYS VISUALIZE YOUR ANALYSIS!
+                ═══════════════════════════════════════════════════════════════════
+                
+                **CRITICAL: Every technical analysis MUST include a chart!**
+                You MUST request ChartingAgent to visualize your analysis every time.
+                
+                After completing technical analysis:
+                1. Identify key signals, levels, and indicators used
+                2. Prepare entry point data if applicable:
+                   - Entry price, stop loss, take profit levels
+                   - Confidence level and reasoning
+                3. Request ChartingAgent to generate a chart with:
+                   - All indicators you used (RSI, MACD, BB, SMA, EMA, etc.)
+                   - Support and resistance levels you identified
+                   - Entry points with SL/TP if trading setup exists
+                   - Any custom indicators from the registry
+                
+                **Chart Request Template:**
+                "ChartingAgent, generate an entry analysis chart for {symbol} with:
+                - indicators: 'rsi,macd,sma,ema,bollinger' (all I used)
+                - support_levels: [list of support prices]
+                - resistance_levels: [list of resistance prices]
+                - entry_points: [{type, price, stop_loss, take_profit, reason, confidence}]
+                - Include my analysis annotations"
+                
+                **NEVER complete an analysis without requesting a chart from ChartingAgent!**
+                The chart is essential for users to visualize and validate your analysis.""",
                 description="Expert in technical analysis, charts, indicators, futures, and custom indicator design",
             )
             
@@ -645,7 +695,37 @@ Specialized cryptocurrency analysis with:
                 - Make code clear and well-commented
                 - **Always evaluate custom indicators before recommending them**
                 
-                Focus on creating actionable, data-validated insights.""",
+                Focus on creating actionable, data-validated insights.
+                
+                ═══════════════════════════════════════════════════════════════════
+                🎨 MANDATORY CHARTING - ALWAYS VISUALIZE CUSTOM INDICATORS!
+                ═══════════════════════════════════════════════════════════════════
+                
+                **CRITICAL: After calculating any custom indicator, request a chart!**
+                
+                When you calculate a custom indicator:
+                1. Use create_indicator_data_for_chart() to format the data
+                2. Request ChartingAgent to display it using custom_indicators parameter
+                
+                **Workflow for Custom Indicator Visualization:**
+                ```python
+                # 1. Calculate your indicator values as [{time, value}, ...]
+                indicator_data = create_indicator_data_for_chart(
+                    name="My Custom RSI",
+                    data=calculated_values,  # [{time: timestamp, value: float}, ...]
+                    color="#FF5722",
+                    separate_scale=True  # True for oscillators (RSI, MACD)
+                )
+                ```
+                
+                # 2. Then tell ChartingAgent:
+                "ChartingAgent, generate an entry analysis chart for {symbol} with:
+                - custom_indicators: [the indicator data I calculated]
+                - indicators: 'rsi,macd,volume' (standard ones for comparison)
+                - Include the analysis levels and signals"
+                
+                **NEVER finish implementing an indicator without visualizing it!**
+                Charts help validate the indicator behavior and communicate results.""",
                 description="Python developer for crypto analysis, custom indicators, and backtesting",
             )
             
@@ -857,7 +937,31 @@ Specialized cryptocurrency analysis with:
                 - CryptoMarketAnalyst: Provides market context for alerts
                 
                 After generating a chart, always tell the user how to open it!
-                Example: "Open the chart with: open /path/to/chart.html" """,
+                Example: "Open the chart with: open /path/to/chart.html"
+                
+                ═══════════════════════════════════════════════════════════════════
+                🎨 PROACTIVE CHARTING - YOU ARE THE VISUALIZATION EXPERT!
+                ═══════════════════════════════════════════════════════════════════
+                
+                **IMPORTANT: Always generate charts when analysis is discussed!**
+                
+                Even if not explicitly asked, you should create charts when:
+                - Market analysis is provided → Generate price chart with key levels
+                - Technical signals are identified → Create annotated chart
+                - Entry/exit points are suggested → Generate entry analysis chart
+                - Multiple timeframes discussed → Create multi-timeframe dashboard
+                - Custom indicators calculated → Display them on charts
+                
+                **Default Chart Settings:**
+                - Always use dark theme
+                - Include at least: sma, ema, volume
+                - Add RSI and MACD for comprehensive analysis
+                - Show support/resistance when available
+                - Annotate entry points with SL/TP when trading setups exist
+                
+                **YOU ARE THE FINAL STEP - ALWAYS DELIVER A CHART!**
+                Every analysis conversation should end with a generated chart file.
+                Make the chart comprehensive with all discussed indicators and ideas.""",
                 description="TradingView charting specialist for interactive visualizations, dashboards, and smart alerts",
             )
             
