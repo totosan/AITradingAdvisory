@@ -11,12 +11,10 @@ import { Plus, X } from "lucide-react";
 export function ChatPanel() {
   const {
     messages,
-    isProcessing,
-    setIsProcessing,
     clearMessages,
     startNewConversation,
   } = useChatStore();
-  const { isConnected } = useStatusStore();
+  const { isConnected, isProcessing } = useStatusStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [inputValue, setInputValue] = useState("");
 
@@ -37,7 +35,6 @@ export function ChatPanel() {
 
   const handleCancel = () => {
     cancelProcessing();
-    setIsProcessing(false);
   };
 
   const handleNewConversation = () => {

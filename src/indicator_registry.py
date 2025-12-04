@@ -368,3 +368,192 @@ from datetime import datetime
         
     except Exception as e:
         return f"# Error loading indicator: {str(e)}"
+
+
+def calculate_indicator_for_chart(
+    indicator_id: Annotated[str, "The indicator ID to calculate"],
+    ohlcv_data: Annotated[str, "JSON array of OHLCV candles with time, open, high, low, close, volume fields"],
+    indicator_params: Annotated[Optional[str], "Optional JSON object of custom parameters to override defaults"] = None,
+    color: Annotated[str, "Hex color for the indicator line (e.g., '#FF5722')"] = "#00BCD4",
+    line_width: Annotated[int, "Line thickness (1-4)"] = 2,
+) -> str:
+    """
+    Calculate a custom indicator and format it for chart display.
+    
+    This function:
+    1. Loads the indicator code from the registry
+    2. Executes it with the provided OHLCV data
+    3. Formats the output for direct use in generate_entry_analysis_chart's custom_indicators parameter
+    
+    The output can be directly passed to generate_entry_analysis_chart:
+    ```
+    result = calculate_indicator_for_chart("volume_weighted_rsi", ohlcv_data)
+    generate_entry_analysis_chart(..., custom_indicators=f'[{result}]')
+    ```
+    
+    Args:
+        indicator_id: ID of the registered indicator to use
+        ohlcv_data: OHLCV candle data in JSON format
+        indicator_params: Optional custom parameters
+        color: Display color for the chart
+        line_width: Line thickness
+        
+    Returns:
+        JSON object ready for custom_indicators parameter, or error
+    """
+    try:
+        import pandas as pd
+        import numpy as np
+        
+        # Load indicator
+        registry = _ensure_registry_exists()
+        indicators = registry.get("indicators", {})
+        
+        if indicator_id not in indicators:
+            return json.dumps({
+                "status": "error",
+                "message": f"Indicator '{indicator_id}' not found. Use list_custom_indicators() to see available indicators."
+            })
+        
+        indicator = indicators[indicator_id]
+        code = indicator.get("code", "")
+        
+        if not code:
+            return json.dumps({
+                "status": "error", 
+                "message": "Indicator has no code"
+            })
+        
+        # Parse OHLCV data
+        candles = json.loads(ohlcv_data) if isinstance(ohlcv_data, str) else ohlcv_data
+        
+        # Create DataFrame
+        df = pd.DataFrame(candles)
+        
+        # Normalize column names
+        df.columns = df.columns.str.lower()
+        
+        # Ensure timestamp is Unix seconds
+        if "time" in df.columns:
+            df["timestamp"] = df["time"]
+        elif "timestamp" in df.columns:
+            if df["timestamp"].dtype == object:
+                # ISO string
+                df["timestamp"] = pd.to_datetime(df["timestamp"]).astype(int) // 10**9
+            elif df["timestamp"].iloc[0] > 10**12:
+                # Milliseconds
+                df["timestamp"] = df["timestamp"] // 1000
+        
+        # Parse custom params
+        params = {}
+        if indicator_params:
+            try:
+                params = json.loads(indicator_params) if isinstance(indicator_params, str) else indicator_params
+            except:
+                pass
+        
+        # Execute indicator code
+        local_vars = {"df": df, "pd": pd, "np": np, **params}
+        exec(code, {"pd": pd, "np": np, "datetime": datetime}, local_vars)
+        
+        # Find the calculated indicator series (look for last assigned variable or common names)
+        result_series = None
+        for name in ["result", "indicator", "signal", "values", "output"]:
+            if name in local_vars and hasattr(local_vars[name], "__iter__"):
+                result_series = local_vars[name]
+                break
+        
+        # If not found, look for any pandas Series that's not the input
+        if result_series is None:
+            for name, val in local_vars.items():
+                if isinstance(val, pd.Series) and name not in ["df", "open", "high", "low", "close", "volume"]:
+                    result_series = val
+                    break
+        
+        if result_series is None:
+            return json.dumps({
+                "status": "error",
+                "message": "Indicator code did not produce a result. Ensure the code assigns to 'result' variable."
+            })
+        
+        # Format for chart display
+        chart_data = []
+        result_arr = result_series if hasattr(result_series, 'tolist') else list(result_series)
+        
+        for i, val in enumerate(result_arr):
+            if i < len(df) and pd.notna(val):
+                chart_data.append({
+                    "time": int(df.iloc[i].get("timestamp", df.iloc[i].get("time", i))),
+                    "value": float(val)
+                })
+        
+        # Increment usage count
+        indicator["usage_count"] = indicator.get("usage_count", 0) + 1
+        indicator["last_used"] = datetime.now().isoformat()
+        registry["indicators"][indicator_id] = indicator
+        _save_registry(registry)
+        
+        return json.dumps({
+            "name": indicator.get("name", indicator_id),
+            "data": chart_data,
+            "color": color,
+            "lineWidth": line_width,
+            "lineStyle": 0,
+        })
+        
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Failed to calculate indicator: {str(e)}"
+        })
+
+
+def create_indicator_data_for_chart(
+    name: Annotated[str, "Display name for the indicator in the chart legend"],
+    data: Annotated[str, "JSON array of {time: unix_timestamp, value: number} data points"],
+    color: Annotated[str, "Hex color for the line (e.g., '#FF5722')"] = "#00BCD4",
+    line_width: Annotated[int, "Line thickness (1-4)"] = 2,
+    line_style: Annotated[int, "0=solid, 1=dotted, 2=dashed"] = 0,
+    separate_scale: Annotated[bool, "If True, display on a separate scale (for oscillators like RSI)"] = False,
+) -> str:
+    """
+    Create a custom indicator object for chart display from raw data.
+    
+    Use this when you've calculated indicator values yourself and want to
+    display them on a chart. The output can be directly used in
+    generate_entry_analysis_chart's custom_indicators parameter.
+    
+    Example workflow:
+    1. Calculate your indicator values: [(timestamp1, value1), (timestamp2, value2), ...]
+    2. Format as JSON: '[{"time": 1701590400, "value": 65.5}, ...]'
+    3. Call this function to create chart-ready data
+    4. Pass result to generate_entry_analysis_chart(custom_indicators=f'[{result}]')
+    
+    Args:
+        name: Legend display name
+        data: Calculated indicator values
+        color: Line color
+        line_width: Thickness
+        line_style: Line style
+        separate_scale: Use separate Y-axis (good for RSI, oscillators)
+        
+    Returns:
+        JSON object ready for custom_indicators parameter
+    """
+    try:
+        data_points = json.loads(data) if isinstance(data, str) else data
+        
+        return json.dumps({
+            "name": name,
+            "data": data_points,
+            "color": color,
+            "lineWidth": line_width,
+            "lineStyle": line_style,
+            "priceScaleId": "custom_oscillator" if separate_scale else "right",
+        })
+        
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Failed to create indicator data: {str(e)}"
+        })

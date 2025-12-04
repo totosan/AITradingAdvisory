@@ -83,6 +83,29 @@ def get_crypto_price(
 ) -> str:  # Always return str (JSON for structured data)
 ```
 
+## Python Environment Management
+
+**Always use UV** for Python environment and package management. UV is a fast Python package installer and resolver.
+
+```bash
+# Create virtual environment with UV
+uv venv
+
+# Activate the environment
+source .venv/bin/activate
+
+# Install all dependencies from pyproject.toml
+uv pip install -e ".[dev]"
+
+# Install specific packages
+uv pip install <package-name>
+
+# Sync dependencies from lock file
+uv sync
+```
+
+> ⚠️ **Important**: Never use raw `pip` commands. Always use `uv pip` for package operations.
+
 ## Development Workflow
 
 ```bash
@@ -105,11 +128,11 @@ source .venv/bin/activate && python -m src.main
 
 ### Environment Setup
 ```bash
-# Create and activate venv
-python3 -m venv .venv && source .venv/bin/activate
+# Create and activate venv with UV
+uv venv && source .venv/bin/activate
 
-# Install backend dependencies
-pip install fastapi uvicorn httpx pydantic-settings websockets python-multipart
+# Install all project dependencies
+uv pip install -e ".[dev]"
 
 # Frontend setup
 cd frontend && npm install
@@ -173,4 +196,5 @@ frontend/src/
 1. **CoinGecko rate limits**: Use TTLCache decorators, not raw API calls
 2. **Coin not found**: Use CoinGecko IDs (`bitcoin`) not tickers (`BTC`)
 3. **Tests fail**: Recreate venv with `uv venv && uv pip install -e ".[dev]"`
-4. **Backend imports fail**: Install `fastapi uvicorn httpx pydantic-settings`
+4. **Backend imports fail**: Run `uv pip install -e ".[dev]"` to install all dependencies
+5. **Never use raw pip**: Always use `uv pip` for package management

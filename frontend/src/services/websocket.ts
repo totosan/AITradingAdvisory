@@ -35,9 +35,9 @@ function getWebSocketUrl(): string {
     // Replace frontend port (5173) with backend port (8500)
     wsHost = `${codespaceMatch[1]}-8500${codespaceMatch[3]}`;
     console.log('[WS] Codespaces detected, switching to backend port:', wsHost);
-  } else if (host.includes('localhost:5173') || host.includes('127.0.0.1:5173')) {
-    // Local development - switch to backend port
-    wsHost = host.replace(':5173', ':8500');
+  } else if (host.match(/localhost:\d+/) || host.match(/127\.0\.0\.1:\d+/)) {
+    // Local development - switch to backend port (8500)
+    wsHost = host.replace(/:\d+/, ':8500');
     console.log('[WS] Local dev detected, switching to backend port:', wsHost);
   }
   

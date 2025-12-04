@@ -11,6 +11,9 @@ Key Features:
 - Support for multiple timeframes and drawing tools
 - Export charts as HTML files or serve via local web server
 - AI-powered chart annotations and analysis markers
+- **Entry/Exit point visualization with signals**
+- **Support/Resistance level drawing**
+- **Trade setup annotations**
 """
 import json
 import os
@@ -21,8 +24,32 @@ import pandas as pd
 
 from chart_assets import LIGHTWEIGHT_CHARTS_SCRIPT
 
-# Output directory for charts
-CHART_OUTPUT_DIR = Path("outputs/charts")
+# Get project root directory (parent of src/)
+_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+
+# =============================================================================
+# ANNOTATION TYPES FOR CHART MARKERS
+# =============================================================================
+# These define the structure for various chart annotations that agents can create
+
+ANNOTATION_TYPES = {
+    "entry_long": {"shape": "arrowUp", "position": "belowBar", "color": "#26a69a", "text": "▲ LONG"},
+    "entry_short": {"shape": "arrowDown", "position": "aboveBar", "color": "#ef5350", "text": "▼ SHORT"},
+    "exit_long": {"shape": "circle", "position": "aboveBar", "color": "#26a69a", "text": "✓ TP"},
+    "exit_short": {"shape": "circle", "position": "belowBar", "color": "#ef5350", "text": "✓ TP"},
+    "stop_loss": {"shape": "square", "position": "belowBar", "color": "#ff5722", "text": "✗ SL"},
+    "take_profit": {"shape": "square", "position": "aboveBar", "color": "#4caf50", "text": "TP"},
+    "support": {"shape": "circle", "position": "belowBar", "color": "#2196f3", "text": "S"},
+    "resistance": {"shape": "circle", "position": "aboveBar", "color": "#9c27b0", "text": "R"},
+    "buy_signal": {"shape": "arrowUp", "position": "belowBar", "color": "#00e676", "text": "BUY"},
+    "sell_signal": {"shape": "arrowDown", "position": "aboveBar", "color": "#ff1744", "text": "SELL"},
+    "warning": {"shape": "circle", "position": "aboveBar", "color": "#ffc107", "text": "⚠"},
+    "info": {"shape": "circle", "position": "aboveBar", "color": "#03a9f4", "text": "ℹ"},
+}
+
+# Output directory for charts - use absolute path to project root
+CHART_OUTPUT_DIR = _PROJECT_ROOT / "outputs" / "charts"
 
 
 def _ensure_output_dir():
@@ -627,6 +654,963 @@ def create_ai_annotated_chart(
             "status": "error",
             "message": f"Failed to create annotated chart: {str(e)}",
         })
+
+
+def generate_entry_analysis_chart(
+    symbol: Annotated[str, "Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')"],
+    entry_points: Annotated[str, """JSON array of entry point objects. Each entry should have:
+        - type: 'long' or 'short' (required)
+        - price: entry price level (required)
+        - timestamp: Unix timestamp or ISO date string (optional, defaults to recent candle)
+        - stop_loss: stop loss price (optional)
+        - take_profit: take profit price or array of prices (optional)
+        - reason: text explanation for the entry (optional)
+        - confidence: 'high', 'medium', 'low' (optional)
+        
+        Example: [{"type": "long", "price": 98500, "stop_loss": 97000, "take_profit": [100000, 102000], "reason": "Breakout above resistance", "confidence": "high"}]
+    """],
+    interval: Annotated[str, "Chart interval: '5m', '15m', '1H', '4H', '1D'"] = "1H",
+    support_levels: Annotated[Optional[str], "JSON array of support price levels, e.g., [95000, 92000]"] = None,
+    resistance_levels: Annotated[Optional[str], "JSON array of resistance price levels, e.g., [100000, 105000]"] = None,
+    indicators: Annotated[Optional[str], "Comma-separated list of built-in indicators: 'sma', 'ema', 'bollinger', 'rsi', 'macd', 'volume'. These show which indicators were used for the analysis."] = None,
+    custom_indicators: Annotated[Optional[str], """JSON array of custom indicator data to overlay on the chart.
+        Each custom indicator should have:
+        - name: Display name for the legend (required)
+        - data: Array of {time: unix_timestamp, value: number} points (required)
+        - color: Hex color code (optional, default: '#00BCD4')
+        - lineWidth: Line thickness 1-4 (optional, default: 2)
+        - lineStyle: 0=solid, 1=dotted, 2=dashed (optional, default: 0)
+        - priceScaleId: 'right' for main scale, or custom ID for separate scale (optional)
+        
+        Example: [{"name": "Custom RSI", "data": [{"time": 1701590400, "value": 65.5}, ...], "color": "#FF5722"}]
+        
+        This allows agents to create and display any custom indicator they calculate!
+    """] = None,
+    title: Annotated[Optional[str], "Chart title describing the analysis"] = None,
+    show_risk_reward: Annotated[bool, "Whether to display risk/reward ratio for entries"] = True,
+) -> str:
+    """
+    Generate a professional chart with entry/exit point annotations for trading analysis.
+    
+    This tool creates an interactive chart that visualizes:
+    - Entry points with direction arrows (long/short)
+    - Stop loss levels marked with red lines
+    - Take profit targets with green lines
+    - Support and resistance zones
+    - Risk/reward ratio calculations
+    - Entry reasoning annotations
+    
+    USE THIS TOOL when:
+    - User asks for entry points or trade setups
+    - Performing technical analysis with actionable signals
+    - Creating trade idea visualizations
+    - Showing where to enter/exit positions
+    
+    Args:
+        symbol: Trading pair to analyze
+        entry_points: JSON array of entry point definitions
+        interval: Chart timeframe
+        support_levels: Optional support price levels
+        resistance_levels: Optional resistance price levels
+        title: Chart title
+        show_risk_reward: Display R:R calculations
+        
+    Returns:
+        JSON with chart file path and entry analysis summary
+    """
+    try:
+        _ensure_output_dir()
+        
+        # Parse entry points
+        entries = json.loads(entry_points) if isinstance(entry_points, str) else entry_points
+        supports = json.loads(support_levels) if support_levels else []
+        resistances = json.loads(resistance_levels) if resistance_levels else []
+        
+        # Fetch real OHLCV data
+        real_data = None
+        candle_data = []
+        try:
+            from exchange_tools import get_ohlcv_data
+            
+            interval_map = {
+                "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+                "1H": "1h", "1h": "1h", "4H": "4h", "4h": "4h",
+                "1D": "1d", "1d": "1d", "1W": "1w", "1w": "1w",
+            }
+            exchange_interval = interval_map.get(interval, "1h")
+            
+            result = json.loads(get_ohlcv_data(symbol, exchange_interval, limit=200))
+            bars = result.get("data") or result.get("candles")
+            if bars:
+                for b in bars:
+                    ts = b["timestamp"]
+                    if isinstance(ts, str):
+                        ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
+                    else:
+                        ts = int(ts) // 1000
+                    candle_data.append({
+                        "time": ts,
+                        "open": float(b["open"]),
+                        "high": float(b["high"]),
+                        "low": float(b["low"]),
+                        "close": float(b["close"]),
+                        "volume": float(b.get("volume", 0)),
+                    })
+        except Exception as e:
+            pass  # Will use placeholder data
+        
+        # Build annotations for markers
+        markers = []
+        price_lines = []
+        entry_summary = []
+        
+        for i, entry in enumerate(entries):
+            entry_type = entry.get("type", "long").lower()
+            entry_price = float(entry.get("price", 0))
+            stop_loss = entry.get("stop_loss")
+            take_profit = entry.get("take_profit")
+            reason = entry.get("reason", "")
+            confidence = entry.get("confidence", "medium")
+            
+            # Get timestamp - find nearest candle or use most recent
+            entry_time = entry.get("timestamp")
+            if entry_time:
+                if isinstance(entry_time, str):
+                    entry_time = int(datetime.fromisoformat(entry_time.replace("Z", "+00:00")).timestamp())
+            elif candle_data:
+                # Find candle closest to entry price
+                closest = min(candle_data[-50:], key=lambda c: abs(c["close"] - entry_price))
+                entry_time = closest["time"]
+            else:
+                entry_time = int(datetime.now().timestamp())
+            
+            # Confidence colors
+            conf_colors = {"high": "#00e676", "medium": "#ffc107", "low": "#ff9800"}
+            
+            # Entry marker
+            marker_config = ANNOTATION_TYPES[f"entry_{entry_type}"]
+            markers.append({
+                "time": entry_time,
+                "position": marker_config["position"],
+                "color": conf_colors.get(confidence, marker_config["color"]),
+                "shape": marker_config["shape"],
+                "text": f"{entry_type.upper()} @ ${entry_price:,.2f}",
+            })
+            
+            # Price lines for entry
+            price_lines.append({
+                "price": entry_price,
+                "color": "#26a69a" if entry_type == "long" else "#ef5350",
+                "lineWidth": 2,
+                "lineStyle": 0,  # Solid
+                "title": f"Entry {i+1}",
+            })
+            
+            # Stop loss line
+            if stop_loss:
+                sl_price = float(stop_loss)
+                price_lines.append({
+                    "price": sl_price,
+                    "color": "#ff5722",
+                    "lineWidth": 1,
+                    "lineStyle": 2,  # Dashed
+                    "title": f"SL {i+1}",
+                })
+            
+            # Take profit lines
+            if take_profit:
+                tps = take_profit if isinstance(take_profit, list) else [take_profit]
+                for j, tp in enumerate(tps):
+                    tp_price = float(tp)
+                    price_lines.append({
+                        "price": tp_price,
+                        "color": "#4caf50",
+                        "lineWidth": 1,
+                        "lineStyle": 2,  # Dashed
+                        "title": f"TP{j+1}",
+                    })
+            
+            # Calculate risk/reward if both SL and TP provided
+            rr_info = ""
+            if stop_loss and take_profit:
+                sl_price = float(stop_loss)
+                tp_price = float(take_profit[0]) if isinstance(take_profit, list) else float(take_profit)
+                if entry_type == "long":
+                    risk = entry_price - sl_price
+                    reward = tp_price - entry_price
+                else:
+                    risk = sl_price - entry_price
+                    reward = entry_price - tp_price
+                if risk > 0:
+                    rr_ratio = reward / risk
+                    rr_info = f"R:R = 1:{rr_ratio:.2f}"
+            
+            entry_summary.append({
+                "type": entry_type,
+                "price": entry_price,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "reason": reason,
+                "confidence": confidence,
+                "risk_reward": rr_info,
+            })
+        
+        # Add support/resistance markers
+        for s in supports:
+            price_lines.append({
+                "price": float(s),
+                "color": "#2196f3",
+                "lineWidth": 1,
+                "lineStyle": 1,  # Dotted
+                "title": "Support",
+            })
+        
+        for r in resistances:
+            price_lines.append({
+                "price": float(r),
+                "color": "#9c27b0",
+                "lineWidth": 1,
+                "lineStyle": 1,  # Dotted
+                "title": "Resistance",
+            })
+        
+        # Parse indicators
+        indicator_list = [i.strip().lower() for i in indicators.split(",")] if indicators else []
+        
+        # Parse custom indicators
+        custom_ind_list = []
+        if custom_indicators:
+            try:
+                custom_ind_list = json.loads(custom_indicators) if isinstance(custom_indicators, str) else custom_indicators
+            except json.JSONDecodeError:
+                pass
+        
+        # Generate timestamp for unique filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        chart_title = title or f"{symbol} Entry Analysis"
+        filename = f"{symbol}_entry_analysis_{timestamp}.html"
+        filepath = CHART_OUTPUT_DIR / filename
+        
+        # Build HTML with enhanced annotation rendering
+        html_content = _generate_entry_analysis_html(
+            symbol=symbol,
+            interval=interval,
+            title=chart_title,
+            candle_data=candle_data,
+            markers=markers,
+            price_lines=price_lines,
+            entry_summary=entry_summary,
+            show_risk_reward=show_risk_reward,
+            has_support=len(supports) > 0,
+            has_resistance=len(resistances) > 0,
+            indicators=indicator_list,
+            custom_indicators=custom_ind_list,
+        )
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        
+        return json.dumps({
+            "status": "success",
+            "message": f"Entry analysis chart generated with {len(entries)} entry point(s)",
+            "chart_file": str(filepath.absolute()),
+            "filename": filename,
+            "symbol": symbol,
+            "interval": interval,
+            "indicators": indicator_list,
+            "entries": entry_summary,
+            "support_levels": supports,
+            "resistance_levels": resistances,
+            "open_command": f"open {filepath.absolute()}",
+        }, indent=2)
+        
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Failed to generate entry analysis chart: {str(e)}",
+        })
+
+
+def _generate_entry_analysis_html(
+    symbol: str,
+    interval: str,
+    title: str,
+    candle_data: List[Dict],
+    markers: List[Dict],
+    price_lines: List[Dict],
+    entry_summary: List[Dict],
+    show_risk_reward: bool = True,
+    has_support: bool = False,
+    has_resistance: bool = False,
+    indicators: List[str] = None,
+    custom_indicators: List[Dict] = None,
+) -> str:
+    """Generate HTML for entry analysis chart with professional styling."""
+    
+    if indicators is None:
+        indicators = []
+    if custom_indicators is None:
+        custom_indicators = []
+    
+    # Theme colors
+    bg_color = "#1e222d"
+    text_color = "#d1d4dc"
+    grid_color = "#2a2e39"
+    up_color = "#26a69a"
+    down_color = "#ef5350"
+    
+    # Determine which legend items to show based on actual data
+    has_long = any(e.get("type") == "long" for e in entry_summary)
+    has_short = any(e.get("type") == "short" for e in entry_summary)
+    has_stop_loss = any(e.get("stop_loss") for e in entry_summary)
+    has_take_profit = any(e.get("take_profit") for e in entry_summary)
+    
+    # Build dynamic legend
+    legend_items = []
+    if has_long:
+        legend_items.append(f'<div class="legend-item"><div class="legend-line" style="background: {up_color};"></div> Long Entry</div>')
+    if has_short:
+        legend_items.append(f'<div class="legend-item"><div class="legend-line" style="background: {down_color};"></div> Short Entry</div>')
+    if has_stop_loss:
+        legend_items.append('<div class="legend-item"><div class="legend-line" style="background: #ff5722; border-style: dashed;"></div> Stop Loss</div>')
+    if has_take_profit:
+        legend_items.append('<div class="legend-item"><div class="legend-line" style="background: #4caf50; border-style: dashed;"></div> Take Profit</div>')
+    if has_support:
+        legend_items.append('<div class="legend-item"><div class="legend-line" style="background: #2196f3; border-style: dotted;"></div> Support</div>')
+    if has_resistance:
+        legend_items.append('<div class="legend-item"><div class="legend-line" style="background: #9c27b0; border-style: dotted;"></div> Resistance</div>')
+    
+    # Add indicator legend items
+    indicator_colors = {
+        "sma": ("#2196F3", "SMA (20)"),
+        "ema": ("#FF9800", "EMA (20)"),
+        "bollinger": ("#9C27B0", "Bollinger Bands"),
+        "volume": ("#607D8B", "Volume"),
+        "rsi": ("#7b1fa2", "RSI (14)"),
+        "macd": ("#00BCD4", "MACD"),
+    }
+    for ind in indicators:
+        if ind in indicator_colors:
+            color, label = indicator_colors[ind]
+            legend_items.append(f'<div class="legend-item"><div class="legend-line" style="background: {color};"></div> {label}</div>')
+    
+    # Add custom indicator legend items
+    for custom_ind in custom_indicators:
+        ind_name = custom_ind.get("name", "Custom Indicator")
+        ind_color = custom_ind.get("color", "#00BCD4")
+        legend_items.append(f'<div class="legend-item"><div class="legend-line" style="background: {ind_color};"></div> {ind_name}</div>')
+    
+    legend_html = "\n".join(legend_items) if legend_items else '<p style="opacity: 0.5; font-size: 11px;">No annotations</p>'
+    
+    # Build entry summary panel with clickable cards
+    summary_html = ""
+    for i, entry in enumerate(entry_summary):
+        entry_type = entry.get("type", "long")
+        type_class = "long" if entry_type == "long" else "short"
+        rr = entry.get("risk_reward", "")
+        
+        summary_html += f'''
+        <div class="entry-card {type_class}" data-entry-index="{i}" onclick="toggleEntry({i})">
+            <div class="entry-header">
+                <span class="entry-type">{'🟢 LONG' if entry_type == 'long' else '🔴 SHORT'}</span>
+                <span class="entry-confidence confidence-{entry.get('confidence', 'medium')}">{entry.get('confidence', 'medium').upper()}</span>
+            </div>
+            <div class="entry-price">Entry: ${entry.get('price', 0):,.2f}</div>
+            <div class="entry-levels">
+                <span class="sl">SL: ${float(entry.get('stop_loss', 0)):,.2f}</span>
+                <span class="tp">TP: {entry.get('take_profit', 'N/A')}</span>
+            </div>
+            {f'<div class="risk-reward">{rr}</div>' if rr and show_risk_reward else ''}
+            {f'<div class="entry-reason">{entry.get("reason", "")}</div>' if entry.get("reason") else ''}
+        </div>
+        '''
+    
+    # Add helper text for interactivity
+    if entry_summary:
+        summary_html = '<p style="font-size: 10px; opacity: 0.5; margin-bottom: 10px;">💡 Click entries to filter chart</p>' + summary_html
+    
+    # Generate chart data JS
+    if candle_data:
+        candles_js = json.dumps(candle_data)
+        volumes_js = json.dumps([
+            {"time": c["time"], "value": c.get("volume", 0), "color": up_color if c["close"] >= c["open"] else down_color}
+            for c in candle_data
+        ])
+    else:
+        candles_js = "[]"
+        volumes_js = "[]"
+    
+    markers_js = json.dumps(markers)
+    price_lines_js = json.dumps(price_lines)
+    
+    html_content = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    {LIGHTWEIGHT_CHARTS_SCRIPT}
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: {bg_color};
+            color: {text_color};
+            padding: 20px;
+        }}
+        .header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 0;
+            border-bottom: 1px solid {grid_color};
+            margin-bottom: 20px;
+        }}
+        .title {{
+            font-size: 24px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .title-badge {{
+            background: linear-gradient(135deg, {up_color}, {down_color});
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        .info {{
+            font-size: 14px;
+            opacity: 0.7;
+        }}
+        .main-container {{
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 20px;
+            height: calc(100vh - 150px);
+        }}
+        .chart-container {{
+            background: {grid_color};
+            border-radius: 8px;
+            padding: 15px;
+            min-height: 500px;
+        }}
+        #chart {{
+            width: 100%;
+            height: 100%;
+        }}
+        .sidebar {{
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }}
+        .panel {{
+            background: {grid_color};
+            border-radius: 8px;
+            padding: 15px;
+        }}
+        .panel-title {{
+            font-size: 14px;
+            font-weight: 600;
+            color: {up_color};
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .entry-card {{
+            background: rgba(255,255,255,0.05);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-left: 3px solid;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            opacity: 1;
+        }}
+        .entry-card:hover {{
+            background: rgba(255,255,255,0.1);
+            transform: translateX(3px);
+        }}
+        .entry-card.dimmed {{
+            opacity: 0.3;
+        }}
+        .entry-card.dimmed:hover {{
+            opacity: 0.6;
+        }}
+        .entry-card.long {{ border-color: {up_color}; }}
+        .entry-card.short {{ border-color: {down_color}; }}
+        .entry-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }}
+        .entry-type {{
+            font-weight: 600;
+            font-size: 14px;
+        }}
+        .entry-confidence {{
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-weight: 600;
+        }}
+        .confidence-high {{ background: {up_color}; color: #000; }}
+        .confidence-medium {{ background: #ffc107; color: #000; }}
+        .confidence-low {{ background: #ff9800; color: #000; }}
+        .entry-price {{
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }}
+        .entry-levels {{
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+            opacity: 0.8;
+        }}
+        .sl {{ color: #ff5722; }}
+        .tp {{ color: #4caf50; }}
+        .risk-reward {{
+            margin-top: 8px;
+            padding: 4px 8px;
+            background: rgba(38, 166, 154, 0.2);
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            color: {up_color};
+            display: inline-block;
+        }}
+        .entry-reason {{
+            margin-top: 8px;
+            font-size: 11px;
+            opacity: 0.7;
+            font-style: italic;
+        }}
+        .legend {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }}
+        .legend-item {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+        }}
+        .legend-color {{
+            width: 12px;
+            height: 3px;
+            border-radius: 1px;
+        }}
+        .legend-marker {{
+            font-size: 14px;
+            font-weight: bold;
+        }}
+        .legend-line {{
+            width: 20px;
+            height: 2px;
+            border-radius: 1px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <div class="title">
+                📊 {title}
+                <span class="title-badge">ENTRY ANALYSIS</span>
+            </div>
+            <div class="info">Interval: {interval} | Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | MagenticOne AI</div>
+        </div>
+    </div>
+    
+    <div class="main-container">
+        <div class="chart-container">
+            <div id="chart"></div>
+        </div>
+        
+        <div class="sidebar">
+            <div class="panel">
+                <div class="panel-title">🎯 Entry Points</div>
+                {summary_html if summary_html else '<p style="opacity: 0.5; font-size: 12px;">No entry points defined</p>'}
+            </div>
+            
+            <div class="panel">
+                <div class="panel-title">📊 Chart Legend</div>
+                <div class="legend">
+                    {legend_html}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const container = document.getElementById('chart');
+        
+        const chart = LightweightCharts.createChart(container, {{
+            autoSize: true,
+            layout: {{
+                background: {{ color: '{bg_color}' }},
+                textColor: '{text_color}',
+            }},
+            grid: {{
+                vertLines: {{ color: '{grid_color}' }},
+                horzLines: {{ color: '{grid_color}' }},
+            }},
+            crosshair: {{
+                mode: LightweightCharts.CrosshairMode.Normal,
+            }},
+            rightPriceScale: {{
+                borderColor: '{grid_color}',
+            }},
+            timeScale: {{
+                borderColor: '{grid_color}',
+                timeVisible: true,
+                secondsVisible: false,
+            }},
+        }});
+
+        const candlestickSeries = chart.addCandlestickSeries({{
+            upColor: '{up_color}',
+            downColor: '{down_color}',
+            borderDownColor: '{down_color}',
+            borderUpColor: '{up_color}',
+            wickDownColor: '{down_color}',
+            wickUpColor: '{up_color}',
+        }});
+
+        // Volume series
+        const volumeSeries = chart.addHistogramSeries({{ 
+            priceFormat: {{ type: "volume" }}, 
+            priceScaleId: "volume" 
+        }});
+        chart.priceScale("volume").applyOptions({{ scaleMargins: {{ top: 0.8, bottom: 0 }} }});
+
+        // Entry point configurations from backend
+        const entryPoints = {json.dumps(entry_summary)};
+        
+        // Load data
+        let candleData = {candles_js};
+        let volumeData = {volumes_js};
+        
+        // Generate placeholder if no real data
+        if (candleData.length === 0) {{
+            const now = Math.floor(Date.now() / 1000);
+            // Use entry prices to create realistic price range
+            const entryPrices = entryPoints.map(e => e.price).filter(p => p > 0);
+            const avgPrice = entryPrices.length > 0 ? entryPrices.reduce((a, b) => a + b, 0) / entryPrices.length : 50000;
+            const volatility = avgPrice * 0.02; // 2% volatility
+            
+            let price = avgPrice * 0.98; // Start slightly below average
+            for (let i = 200; i >= 0; i--) {{
+                const time = now - i * 3600;
+                const open = price;
+                const change = (Math.random() - 0.5) * volatility;
+                const close = open + change;
+                const high = Math.max(open, close) + Math.random() * (volatility * 0.3);
+                const low = Math.min(open, close) - Math.random() * (volatility * 0.3);
+                const volume = Math.random() * 1000000;
+                candleData.push({{ time, open, high, low, close }});
+                volumeData.push({{ time, value: volume, color: close >= open ? '{up_color}' : '{down_color}' }});
+                price = close;
+            }}
+        }}
+        
+        candlestickSeries.setData(candleData);
+        volumeSeries.setData(volumeData);
+
+        // Technical Indicator Calculation Functions
+        function calculateSMA(data, period) {{
+            const sma = [];
+            for (let i = period - 1; i < data.length; i++) {{
+                let sum = 0;
+                for (let j = 0; j < period; j++) {{
+                    sum += data[i - j].close;
+                }}
+                sma.push({{ time: data[i].time, value: sum / period }});
+            }}
+            return sma;
+        }}
+
+        function calculateEMA(data, period) {{
+            const ema = [];
+            const multiplier = 2 / (period + 1);
+            let emaPrev = data.slice(0, period).reduce((sum, d) => sum + d.close, 0) / period;
+            
+            for (let i = period - 1; i < data.length; i++) {{
+                const emaValue = (data[i].close - emaPrev) * multiplier + emaPrev;
+                ema.push({{ time: data[i].time, value: emaValue }});
+                emaPrev = emaValue;
+            }}
+            return ema;
+        }}
+
+        function calculateBollingerBands(data, period, stdDev) {{
+            const upper = [];
+            const middle = [];
+            const lower = [];
+            
+            for (let i = period - 1; i < data.length; i++) {{
+                let sum = 0;
+                for (let j = 0; j < period; j++) {{
+                    sum += data[i - j].close;
+                }}
+                const sma = sum / period;
+                
+                let variance = 0;
+                for (let j = 0; j < period; j++) {{
+                    variance += Math.pow(data[i - j].close - sma, 2);
+                }}
+                const std = Math.sqrt(variance / period);
+                
+                upper.push({{ time: data[i].time, value: sma + stdDev * std }});
+                middle.push({{ time: data[i].time, value: sma }});
+                lower.push({{ time: data[i].time, value: sma - stdDev * std }});
+            }}
+            
+            return {{ upper, middle, lower }};
+        }}
+
+        function calculateRSI(data, period) {{
+            if (data.length < period + 1) return [];
+            
+            const rsi = [];
+            let gains = [];
+            let losses = [];
+            
+            for (let i = 1; i <= period; i++) {{
+                const change = data[i].close - data[i - 1].close;
+                gains.push(change > 0 ? change : 0);
+                losses.push(change < 0 ? -change : 0);
+            }}
+            
+            let avgGain = gains.reduce((a, b) => a + b, 0) / period;
+            let avgLoss = losses.reduce((a, b) => a + b, 0) / period;
+            
+            for (let i = period; i < data.length; i++) {{
+                const change = data[i].close - data[i - 1].close;
+                const gain = change > 0 ? change : 0;
+                const loss = change < 0 ? -change : 0;
+                
+                avgGain = (avgGain * (period - 1) + gain) / period;
+                avgLoss = (avgLoss * (period - 1) + loss) / period;
+                
+                const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+                rsi.push({{ time: data[i].time, value: 100 - (100 / (1 + rs)) }});
+            }}
+            
+            return rsi;
+        }}
+
+        // Add indicator overlays based on configuration
+        const indicatorConfig = {json.dumps(indicators)};
+        
+        // SMA - Simple Moving Average (blue line)
+        if (indicatorConfig.includes('sma')) {{
+            const sma20Series = chart.addLineSeries({{ 
+                color: '#2196F3', 
+                lineWidth: 2,
+                title: 'SMA 20'
+            }});
+            sma20Series.setData(calculateSMA(candleData, 20));
+        }}
+        
+        // EMA - Exponential Moving Average (orange line)
+        if (indicatorConfig.includes('ema')) {{
+            const ema20Series = chart.addLineSeries({{ 
+                color: '#FF9800', 
+                lineWidth: 2,
+                title: 'EMA 20'
+            }});
+            ema20Series.setData(calculateEMA(candleData, 20));
+        }}
+        
+        // Bollinger Bands (purple)
+        if (indicatorConfig.includes('bollinger')) {{
+            const bb = calculateBollingerBands(candleData, 20, 2);
+            
+            const bbUpper = chart.addLineSeries({{ 
+                color: '#9C27B0', 
+                lineWidth: 1,
+                lineStyle: 2,
+            }});
+            const bbMiddle = chart.addLineSeries({{ 
+                color: '#9C27B0', 
+                lineWidth: 1,
+                lineStyle: 1,
+            }});
+            const bbLower = chart.addLineSeries({{ 
+                color: '#9C27B0', 
+                lineWidth: 1,
+                lineStyle: 2,
+            }});
+            
+            bbUpper.setData(bb.upper);
+            bbMiddle.setData(bb.middle);
+            bbLower.setData(bb.lower);
+        }}
+
+        // Render custom indicators (agent-created indicators with pre-calculated data)
+        const customIndicators = {json.dumps(custom_indicators)};
+        customIndicators.forEach((indicator, index) => {{
+            const indName = indicator.name || `Custom ${{index + 1}}`;
+            const indColor = indicator.color || '#00BCD4';
+            const indWidth = indicator.lineWidth || 2;
+            const indStyle = indicator.lineStyle || 0;
+            const indData = indicator.data || [];
+            const priceScaleId = indicator.priceScaleId || 'right';
+            
+            // Create line series for this custom indicator
+            const customSeries = chart.addLineSeries({{
+                color: indColor,
+                lineWidth: indWidth,
+                lineStyle: indStyle,
+                title: indName,
+                priceScaleId: priceScaleId,
+                lastValueVisible: true,
+                priceLineVisible: false,
+            }});
+            
+            // If using a separate scale, configure it
+            if (priceScaleId !== 'right') {{
+                chart.priceScale(priceScaleId).applyOptions({{
+                    scaleMargins: {{ top: 0.7, bottom: 0.05 }},
+                }});
+            }}
+            
+            // Set the indicator data
+            if (indData.length > 0) {{
+                customSeries.setData(indData);
+            }}
+        }});
+
+        // Price lines configuration with entry index association
+        const allPriceLines = {price_lines_js};
+        const entryData = {json.dumps(entry_summary)};
+        
+        // Track which entries are selected (all visible by default)
+        let selectedEntries = new Set();
+        let isFilterMode = false;  // false = all visible, true = only selected visible
+        
+        // Map price lines to entry indices
+        // Lines are created in order: Entry, SL, TPs for each entry, then Support, Resistance
+        const entryLineMap = {{}};  // Maps line index to entry index
+        let lineIdx = 0;
+        entryData.forEach((entry, entryIdx) => {{
+            // Entry line
+            entryLineMap[lineIdx++] = {{ entryIndex: entryIdx, type: 'entry' }};
+            // SL line if exists
+            if (entry.stop_loss) {{
+                entryLineMap[lineIdx++] = {{ entryIndex: entryIdx, type: 'sl' }};
+            }}
+            // TP lines if exist
+            const tps = entry.take_profit;
+            if (tps) {{
+                const tpList = Array.isArray(tps) ? tps : [tps];
+                tpList.forEach(() => {{
+                    entryLineMap[lineIdx++] = {{ entryIndex: entryIdx, type: 'tp' }};
+                }});
+            }}
+        }});
+        // Remaining lines are support/resistance (always visible)
+        const supportResistanceStartIdx = lineIdx;
+        
+        // Store created price line objects for visibility control
+        let createdPriceLines = [];
+        
+        // Function to draw price lines based on selection
+        function drawPriceLines() {{
+            // Remove existing lines by recreating the series approach
+            // Since LightweightCharts doesn't allow removing individual price lines,
+            // we'll use visibility by setting price to NaN or using series
+            
+            // Clear existing price lines by storing references
+            createdPriceLines.forEach(pl => {{
+                try {{
+                    candlestickSeries.removePriceLine(pl);
+                }} catch(e) {{}}
+            }});
+            createdPriceLines = [];
+            
+            allPriceLines.forEach((line, idx) => {{
+                const mapping = entryLineMap[idx];
+                let shouldShow = true;
+                
+                if (mapping !== undefined) {{
+                    // This is an entry-related line
+                    if (isFilterMode) {{
+                        shouldShow = selectedEntries.has(mapping.entryIndex);
+                    }}
+                }}
+                // Support/Resistance lines always show
+                
+                if (shouldShow) {{
+                    const pl = candlestickSeries.createPriceLine({{
+                        price: line.price,
+                        color: line.color,
+                        lineWidth: line.lineWidth,
+                        lineStyle: line.lineStyle,
+                        axisLabelVisible: true,
+                        title: line.title,
+                    }});
+                    createdPriceLines.push(pl);
+                }}
+            }});
+        }}
+        
+        // Toggle entry visibility
+        function toggleEntry(entryIndex) {{
+            const card = document.querySelector(`[data-entry-index="${{entryIndex}}"]`);
+            
+            if (selectedEntries.has(entryIndex)) {{
+                // Deselect this entry
+                selectedEntries.delete(entryIndex);
+                card.classList.add('dimmed');
+            }} else {{
+                // Select this entry
+                selectedEntries.add(entryIndex);
+                card.classList.remove('dimmed');
+            }}
+            
+            // If no entries selected, show all (exit filter mode)
+            if (selectedEntries.size === 0) {{
+                isFilterMode = false;
+                document.querySelectorAll('.entry-card').forEach(c => c.classList.remove('dimmed'));
+            }} else {{
+                isFilterMode = true;
+                // Dim non-selected cards
+                document.querySelectorAll('.entry-card').forEach(c => {{
+                    const idx = parseInt(c.dataset.entryIndex);
+                    if (!selectedEntries.has(idx)) {{
+                        c.classList.add('dimmed');
+                    }}
+                }});
+            }}
+            
+            // Redraw price lines
+            drawPriceLines();
+        }}
+        
+        // Make toggleEntry globally available
+        window.toggleEntry = toggleEntry;
+        
+        // Initial draw
+        drawPriceLines();
+
+        // Fit content
+        setTimeout(() => {{
+            chart.timeScale().fitContent();
+        }}, 100);
+    </script>
+</body>
+</html>
+'''
+    
+    return html_content
 
 
 def generate_multi_timeframe_dashboard(

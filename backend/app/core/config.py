@@ -6,8 +6,11 @@ Environment variables are loaded from .env file or environment.
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Literal, Optional
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
+
+# Compute project root at module load time
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.absolute()
 
 
 class Settings(BaseSettings):
@@ -70,9 +73,10 @@ class Settings(BaseSettings):
     # Storage
     # ==========================================================================
     # Use /app/outputs in Docker, project root outputs/ for local dev
-    output_dir: str = "/app/outputs" if Path("/app").exists() else str(Path(__file__).parent.parent.parent.parent / "outputs")
+    # Note: Must use absolute paths to avoid CWD issues when running from different directories
+    output_dir: str = Field(default="/app/outputs" if Path("/app").exists() else str(_PROJECT_ROOT / "outputs"))
     # Use /app/data in Docker, project data/ dir for local development
-    secrets_dir: str = "/app/data" if Path("/app/data").exists() else str(Path(__file__).parent.parent.parent.parent / "data")
+    secrets_dir: str = Field(default="/app/data" if Path("/app/data").exists() else str(_PROJECT_ROOT / "data"))
     
     class Config:
         # Look for .env in project root (3 levels up from this file)

@@ -119,6 +119,12 @@ class AgentService:
         self._model_client = None  # Lazy initialization
         self.conversation_history: List[Dict[str, str]] = []
         self._cancelled = False
+        self._cancel_event = asyncio.Event()
+    
+    @property
+    def is_cancelled(self) -> bool:
+        """Check if the current task has been cancelled."""
+        return self._cancelled
     
     @property
     def model_client(self):
@@ -186,6 +192,7 @@ class AgentService:
         from tradingview_tools import (
             generate_tradingview_chart, create_ai_annotated_chart,
             generate_multi_timeframe_dashboard, generate_strategy_backtest_chart,
+            generate_entry_analysis_chart,  # NEW: Entry points visualization
         )
         from smart_alerts import (
             generate_smart_alerts_dashboard, create_trade_idea_alert,
@@ -210,6 +217,7 @@ class AgentService:
         tradingview_tools_list = [
             generate_tradingview_chart, create_ai_annotated_chart,
             generate_multi_timeframe_dashboard, generate_strategy_backtest_chart,
+            generate_entry_analysis_chart,  # Entry points with SL/TP visualization
             generate_smart_alerts_dashboard, create_trade_idea_alert,
         ]
         
@@ -253,6 +261,12 @@ Guidelines:
 - RSI > 70 = Overbought (potential sell)
 - MACD crossover = Trend change signal
 
+When analyzing for entry points, provide structured data for ChartingAgent:
+- Entry prices at key levels
+- Stop loss below support (long) or above resistance (short)
+- Take profit targets with minimum 2:1 R:R
+- Confidence level (high/medium/low) based on confluences
+
 Always explain your technical findings in clear terms.""",
             description="Expert in technical analysis, charts, and indicators",
         )
@@ -269,10 +283,23 @@ Your tools:
 - create_ai_annotated_chart: Charts with AI signals
 - generate_strategy_backtest_chart: Backtest visualizations
 - generate_smart_alerts_dashboard: AI trading alerts
+- **generate_entry_analysis_chart**: THE KEY TOOL for entry point visualization with SL/TP!
+
+**USE generate_entry_analysis_chart when:**
+- User asks for entry points or trade setups
+- User wants to see where to buy/sell with stop loss and take profit
+- Creating actionable trading visualizations
+
+**IMPORTANT: Include indicators parameter to show which indicators were used!**
+Example: indicators="sma,ema,bollinger" displays these overlays on the chart
+Available indicators: 'sma', 'ema', 'bollinger', 'rsi', 'macd', 'volume'
+
+Entry point format:
+[{"type": "long", "price": 98500, "stop_loss": 97000, "take_profit": [100000, 102000], "reason": "Breakout", "confidence": "high"}]
 
 Symbol format: 'BTCUSDT', 'ETHUSDT' (trading pairs)
 Intervals: '1m', '5m', '15m', '1H', '4H', '1D', '1W'""",
-            description="TradingView charting specialist",
+            description="TradingView charting specialist with entry point visualization",
         )
         
         coder = AssistantAgent(
@@ -361,7 +388,8 @@ Include executive summary, analysis, recommendations, and risk factors.""",
         Yields:
             Pydantic event models (AgentStepEvent, ToolCallEvent, etc.)
         """
-        self._cancelled = False
+        # Note: reset_cancellation() should be called by the WebSocket handler
+        # before calling this method, but we check just in case
         
         # Send initial status
         yield StatusEvent(
@@ -485,7 +513,9 @@ Include executive summary, analysis, recommendations, and risk factors.""",
                     for result in msg.content:
                         call_id = getattr(result, 'call_id', 'unknown')
                         content = getattr(result, 'content', '')
+                        logger.debug(f"Tool result content type: {type(content)}, preview: {str(content)[:200]}")
                         chart_data = _extract_chart_data(content)
+                        logger.debug(f"Extracted chart_data: {chart_data}")
 
                         if chart_data:
                             chart_path = None
@@ -519,6 +549,8 @@ Include executive summary, analysis, recommendations, and risk factors.""",
                                     normalized_url = normalized_url.replace('/outputs/charts/', '/charts/', 1)
                                 if not normalized_url.startswith('/') and not normalized_url.startswith('http'):
                                     normalized_url = f"/charts/{normalized_url}"
+
+                                logger.info(f"Chart URL normalized: {normalized_url}")
 
                                 timeframes = chart_data.get('timeframes')
                                 interval_value = chart_data.get('interval')
@@ -567,7 +599,14 @@ Include executive summary, analysis, recommendations, and risk factors.""",
     async def cancel(self):
         """Cancel the current running task."""
         self._cancelled = True
+        self._cancel_event.set()
         logger.info("Agent task cancellation requested")
+    
+    def reset_cancellation(self):
+        """Reset cancellation state for a new request."""
+        self._cancelled = False
+        self._cancel_event.clear()
+        logger.debug("Cancellation state reset")
     
     def add_to_history(self, role: str, content: str):
         """Add a message to conversation history."""

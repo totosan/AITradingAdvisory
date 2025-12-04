@@ -67,12 +67,15 @@ from indicator_registry import (
     get_custom_indicator,
     delete_custom_indicator,
     get_indicator_code_for_execution,
+    calculate_indicator_for_chart,
+    create_indicator_data_for_chart,
 )
 from tradingview_tools import (
     generate_tradingview_chart,
     create_ai_annotated_chart,
     generate_multi_timeframe_dashboard,
     generate_strategy_backtest_chart,
+    generate_entry_analysis_chart,  # NEW: Entry points visualization
 )
 from tradingview_udf_server import (
     start_udf_server,
@@ -275,6 +278,8 @@ Specialized cryptocurrency analysis with:
                 get_custom_indicator,
                 delete_custom_indicator,
                 get_indicator_code_for_execution,
+                calculate_indicator_for_chart,
+                create_indicator_data_for_chart,
             ]
             
             # Define TradingView charting tools
@@ -283,6 +288,7 @@ Specialized cryptocurrency analysis with:
                 create_ai_annotated_chart,
                 generate_multi_timeframe_dashboard,
                 generate_strategy_backtest_chart,
+                generate_entry_analysis_chart,  # Entry points visualization
                 start_udf_server,
                 stop_udf_server,
                 get_udf_server_status,
@@ -433,6 +439,26 @@ Specialized cryptocurrency analysis with:
                 - Positive funding rate = Longs pay shorts (bullish sentiment)
                 - High open interest = Strong trend conviction
                 
+                **ENTRY POINT ANALYSIS:**
+                When analyzing for entry points, provide structured data for ChartingAgent:
+                - Identify potential entry prices based on key levels
+                - Define stop loss below support (long) or above resistance (short)
+                - Set take profit targets at next S/R levels or with minimum 2:1 R:R
+                - Include confidence level (high/medium/low) based on confluences
+                - Explain the reasoning for each entry
+                
+                Pass entry data to ChartingAgent in this format:
+                ```json
+                {
+                  "type": "long",
+                  "price": 98500,
+                  "stop_loss": 97000,
+                  "take_profit": [100000, 102000],
+                  "reason": "Breakout above resistance with volume confirmation",
+                  "confidence": "high"
+                }
+                ```
+                
                 Always explain your technical findings in clear terms.
                 When proposing custom indicators, explain the logic and expected edge.""",
                 description="Expert in technical analysis, charts, indicators, futures, and custom indicator design",
@@ -466,6 +492,22 @@ Specialized cryptocurrency analysis with:
                 - save_custom_indicator(...) - Save a new indicator to the registry
                 - get_indicator_code_for_execution(indicator_id) - Get executable code
                 - delete_custom_indicator(indicator_id, confirm) - Remove an indicator
+                
+                📊 **Chart Display Tools (NEW!):**
+                - calculate_indicator_for_chart(indicator_id, ohlcv_data, params, color) - Calculate saved indicator and format for chart
+                - create_indicator_data_for_chart(name, data, color, line_width, separate_scale) - Create chart data from calculated values
+                
+                **WORKFLOW FOR DISPLAYING CUSTOM INDICATORS ON CHARTS:**
+                
+                Option 1: Use a saved indicator
+                1. Calculate indicator: result = calculate_indicator_for_chart("my_indicator", ohlcv_data, color="#FF5722")
+                2. Pass to ChartingAgent: Tell ChartingAgent to use custom_indicators=[result]
+                
+                Option 2: Calculate and display ad-hoc indicator
+                1. Fetch OHLCV data: ohlcv = get_ohlcv_data("BTCUSDT", "1h", 200)
+                2. Calculate your indicator values as [{time, value}, ...]
+                3. Format: result = create_indicator_data_for_chart("My RSI", data, "#FF5722", separate_scale=True)
+                4. Pass to ChartingAgent: Tell ChartingAgent to use custom_indicators=[result]
                 
                 **WORKFLOW FOR CUSTOM INDICATORS:**
                 1. FIRST: Check if a similar indicator exists with list_custom_indicators()
@@ -659,6 +701,7 @@ Specialized cryptocurrency analysis with:
                 - Strategy backtest visualizations
                 - Live data chart generation with UDF server
                 - **AI Smart Alerts Dashboard** - The ULTIMATE trading tool!
+                - **Entry Point Analysis Charts** - Visualize trading setups with SL/TP!
                 
                 **YOUR CHARTING TOOLS:**
                 
@@ -680,6 +723,30 @@ Specialized cryptocurrency analysis with:
                 - analysis_signals: JSON array of signals [{time, type: 'buy'/'sell', description}]
                 - support_resistance: Optional S/R levels
                 Best for communicating trading ideas!
+                
+                🚀 **generate_entry_analysis_chart(symbol, entry_points, interval, support_levels, resistance_levels, indicators, custom_indicators, title, show_risk_reward)**
+                **THE KEY TOOL FOR ENTRY POINT VISUALIZATION!**
+                Creates professional charts with entry/exit annotations:
+                - entry_points: JSON array of entries with type, price, stop_loss, take_profit, reason, confidence
+                  Example: [{"type": "long", "price": 98500, "stop_loss": 97000, "take_profit": [100000, 102000], "reason": "Breakout", "confidence": "high"}]
+                - support_levels: Array of support prices [95000, 92000]
+                - resistance_levels: Array of resistance prices [100000, 105000]
+                - **indicators**: Comma-separated list of BUILT-IN indicators:
+                  Options: 'sma', 'ema', 'bollinger', 'rsi', 'macd', 'volume'
+                  Example: "sma,ema,bollinger" - Shows these indicators on the chart
+                - **custom_indicators**: JSON array of CUSTOM indicators from CryptoAnalysisCoder!
+                  Each indicator: {name, data: [{time, value}], color, lineWidth, lineStyle, priceScaleId}
+                  Example: '[{"name": "Volume RSI", "data": [...], "color": "#FF5722"}]'
+                  **Use this to display ANY custom indicator the agent calculates!**
+                - show_risk_reward: Display R:R ratio for entries
+                
+                **USE THIS TOOL WHEN:**
+                - User asks for entry points or trade setups
+                - Performing technical analysis with actionable signals
+                - Creating trade idea visualizations
+                - Showing where to enter/exit positions with SL/TP
+                - **ALWAYS include indicators you used for analysis!**
+                - **Accept custom_indicators from CryptoAnalysisCoder for unique indicators!**
                 
                 📉 **generate_strategy_backtest_chart(symbol, strategy_name, trades, equity_curve, metrics)**
                 Creates comprehensive backtest visualizations.
@@ -711,6 +778,21 @@ Specialized cryptocurrency analysis with:
                 - Supporting signals list
                 - Confidence rating
                 
+                **WORKFLOW FOR ENTRY POINT ANALYSIS:**
+                
+                1. **Receive analysis from TechnicalAnalyst** with support/resistance and signals
+                2. **Determine entry points** based on:
+                   - Key breakout levels
+                   - Support/resistance bounces
+                   - Indicator confluences (RSI oversold + support, etc.)
+                3. **Calculate risk/reward**:
+                   - Stop loss below support (long) or above resistance (short)
+                   - Take profit at next resistance/support or 2:1 R:R minimum
+                4. **Generate entry analysis chart** using generate_entry_analysis_chart with all levels
+                   **IMPORTANT: Include the indicators parameter to show which indicators were used!**
+                   Example: indicators="sma,ema,bollinger" shows those overlays on the chart
+                5. **Explain the setup** with reason and confidence
+                
                 **WORKFLOW FOR BEST RESULTS:**
                 
                 1. **Simple Analysis Chart:**
@@ -719,22 +801,27 @@ Specialized cryptocurrency analysis with:
                 2. **Trend Analysis:**
                    Use generate_multi_timeframe_dashboard to see trend alignment
                    
-                3. **Signal Visualization:**
+                3. **Entry Point Visualization:**
+                   Use generate_entry_analysis_chart to show specific entries with SL/TP
+                   **Always include indicators="sma,ema,bollinger" etc. to show the analysis basis!**
+                   
+                4. **Signal Visualization:**
                    Get signals from TechnicalAnalyst, then use create_ai_annotated_chart
                    
-                4. **Strategy Validation:**
+                5. **Strategy Validation:**
                    After CryptoAnalysisCoder backtests, use generate_strategy_backtest_chart
                    
-                5. **Live Monitoring:**
+                6. **Live Monitoring:**
                    Start UDF server, then generate_live_chart_with_data for real-time updates
                    
-                6. **Trading Alerts:**
+                7. **Trading Alerts:**
                    Use generate_smart_alerts_dashboard for multi-symbol scanning
                    Use create_trade_idea_alert for specific high-conviction setups
                 
                 **CHARTING BEST PRACTICES:**
                 - Always use dark theme for professional look
                 - Include volume in most charts
+                - **Show indicators used in analysis** via the indicators parameter
                 - For trend analysis, show 4H + 1D timeframes at minimum
                 - Annotate key levels (support/resistance)
                 - Save charts to outputs/charts/ directory

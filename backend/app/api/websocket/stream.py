@@ -37,6 +37,7 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
         self.running_tasks: Dict[str, asyncio.Task] = {}
+        self.agent_services: Dict[str, AgentService] = {}
         self._lock = asyncio.Lock()
     
     async def connect(self, websocket: WebSocket, client_id: str) -> None:
@@ -90,14 +91,33 @@ class ConnectionManager:
         """Register a running task for a client."""
         self.running_tasks[client_id] = task
     
+    def register_agent_service(self, client_id: str, agent_service: AgentService) -> None:
+        """Register an agent service for a client."""
+        self.agent_services[client_id] = agent_service
+    
     async def cancel_task(self, client_id: str) -> bool:
-        """Cancel a client's running task."""
+        """Cancel a client's running task and signal the agent service."""
+        cancelled = False
+        
+        # First, signal the agent service to cancel (sets internal flag)
+        if client_id in self.agent_services:
+            agent_service = self.agent_services[client_id]
+            await agent_service.cancel()
+            logger.info(f"Signalled agent service cancellation for {client_id[:8]}...")
+            cancelled = True
+        
+        # Then cancel the asyncio task
         if client_id in self.running_tasks:
             task = self.running_tasks.pop(client_id)
             if not task.done():
                 task.cancel()
-                return True
-        return False
+                cancelled = True
+        
+        return cancelled
+    
+    def cleanup_agent_service(self, client_id: str) -> None:
+        """Remove the agent service reference for a client."""
+        self.agent_services.pop(client_id, None)
     
     @property
     def connection_count(self) -> int:
@@ -171,6 +191,7 @@ async def websocket_endpoint(websocket: WebSocket):
     })
     
     agent_service = AgentService()
+    manager.register_agent_service(client_id, agent_service)
     
     try:
         while True:
@@ -201,6 +222,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         "timestamp": datetime.now().isoformat(),
                     })
                     continue
+                
+                # Reset cancellation flag for new request
+                agent_service.reset_cancellation()
                 
                 # Notify processing started
                 await manager.send_event(client_id, {
@@ -259,6 +283,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.exception(f"WebSocket error for {client_id[:8]}...: {e}")
     finally:
+        manager.cleanup_agent_service(client_id)
         await manager.disconnect(client_id)
 
 
