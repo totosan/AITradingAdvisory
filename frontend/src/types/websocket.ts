@@ -11,6 +11,8 @@ export type EventType =
   | "result"
   | "quick_result"
   | "error"
+  | "content_filter_error"
+  | "content_filter_retry"
   | "progress";
 
 export interface StatusEvent {
@@ -80,6 +82,25 @@ export interface ErrorEvent {
   timestamp: string;
 }
 
+export interface ContentFilterErrorEvent {
+  type: "content_filter_error";
+  message: string;
+  triggered_prompt: string;
+  filter_results?: Record<string, unknown>;
+  filter_type?: string;
+  recoverable: boolean;
+  timestamp: string;
+}
+
+export interface ContentFilterRetryEvent {
+  type: "content_filter_retry";
+  message: string;
+  retry_count: number;
+  max_retries: number;
+  filter_type?: string;
+  timestamp: string;
+}
+
 export interface ProgressEvent {
   type: "progress";
   current_turn: number;
@@ -97,6 +118,8 @@ export type ServerEvent =
   | ResultEvent
   | QuickResultEvent
   | ErrorEvent
+  | ContentFilterErrorEvent
+  | ContentFilterRetryEvent
   | ProgressEvent;
 
 /**

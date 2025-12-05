@@ -40,6 +40,8 @@ from app.models.events import (
     FinalResultEvent,
     QuickResultEvent,
     ErrorEvent,
+    ContentFilterErrorEvent,
+    ContentFilterRetryEvent,
     ProgressEvent,
     ChartGeneratedEvent,
     StatusEvent,
@@ -49,6 +51,49 @@ from app.models.events import (
 from intent_router import IntentRouter, IntentType, Intent, format_simple_result
 
 logger = logging.getLogger(__name__)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SHARED AGENT GUIDELINES - Applied to ALL agents for maximum trading success
+# ═══════════════════════════════════════════════════════════════════════════════
+
+SHARED_AGENT_RULES = """
+═══════════════════════════════════════════════════════════════════════════════
+🔒 UNIVERSELLE REGELN - DU BIST AUTONOM!
+═══════════════════════════════════════════════════════════════════════════════
+
+🚨 DU HAST DIREKTEN ZUGRIFF AUF LIVE-DATEN VON BITGET!
+   Du brauchst KEINE Daten vom Benutzer - du holst sie SELBST!
+
+⛔ **ABSOLUT VERBOTEN:**
+1. "Ich brauche Daten von dir" sagen → DU holst die Daten selbst!
+2. "Welche Börse benutzt du?" fragen → DU hast Bitget-Zugang!
+3. "Bitte schicke mir die Daten" → NIEMALS! Du rufst get_ohlcv_data() auf!
+4. Auf Benutzer-Input warten → Du handelst SOFORT autonom!
+5. Synthetische/hypothetische Daten verwenden → NUR echte Tool-Daten!
+
+✅ **KORREKTES VERHALTEN bei JEDER Anfrage:**
+1. SOFORT get_realtime_price() oder get_ohlcv_data() aufrufen
+2. Die ECHTEN Daten analysieren
+3. Ergebnisse mit Zeitstempel und Quelle dokumentieren
+4. Chart erstellen lassen
+
+📋 **BEISPIEL - Benutzer fragt "Analysiere XRP":**
+FALSCH ❌: "Ich brauche erst die Kursdaten von dir..."
+RICHTIG ✅: Sofort get_ohlcv_data("XRPUSDT", "1H", 200) aufrufen!
+
+🎯 **DEIN WORKFLOW:**
+```
+1. get_realtime_price("XRPUSDT") → Aktueller Preis
+2. get_ohlcv_data("XRPUSDT", "1H", 200) → Stunden-Kerzen
+3. Indikatoren berechnen (RSI, MACD, etc.)
+4. S/R Levels aus echten Highs/Lows
+5. Entry/SL/TP bestimmen
+6. ChartingAgent für Visualisierung
+```
+
+DU BIST AUTONOM! KEINE AUSREDEN! HOLE DIE DATEN SELBST!
+═══════════════════════════════════════════════════════════════════════════════
+"""
 
 # Agent emojis for UI display
 AGENT_EMOJIS = {
@@ -62,6 +107,121 @@ AGENT_EMOJIS = {
 
 
 ChartContent = Union[str, Dict[str, Any], List[Any]]
+
+
+def _parse_content_filter_error(error_str: str) -> Optional[Dict[str, Any]]:
+    """
+    Parse Azure OpenAI content filter error to extract details.
+    
+    Returns dict with filter_type, filter_results if content filter error,
+    otherwise None.
+    """
+    if "content_filter" not in error_str.lower() and "content management policy" not in error_str.lower():
+        return None
+    
+    result = {
+        "is_content_filter": True,
+        "filter_type": None,
+        "filter_results": None,
+    }
+    
+    # Try to parse JSON error structure
+    try:
+        # Find JSON-like structure in the error string
+        import re
+        json_match = re.search(r"\{.*'error'.*\}", error_str, re.DOTALL)
+        if json_match:
+            # Convert single quotes to double quotes for JSON parsing
+            json_str = json_match.group(0).replace("'", '"').replace("None", "null").replace("True", "true").replace("False", "false")
+            error_data = json.loads(json_str)
+            
+            if "error" in error_data:
+                inner_error = error_data["error"].get("innererror", {})
+                content_filter_result = inner_error.get("content_filter_result", {})
+                
+                result["filter_results"] = content_filter_result
+                
+                # Determine which filter was triggered
+                for filter_name, filter_data in content_filter_result.items():
+                    if isinstance(filter_data, dict) and filter_data.get("filtered", False):
+                        result["filter_type"] = filter_name
+                        break
+                    elif isinstance(filter_data, dict) and filter_data.get("detected", False):
+                        result["filter_type"] = filter_name
+                        break
+                        
+    except (json.JSONDecodeError, KeyError, AttributeError) as e:
+        logger.debug(f"Could not parse content filter error JSON: {e}")
+        # Fallback: try to find filter type from text
+        if "jailbreak" in error_str.lower():
+            result["filter_type"] = "jailbreak"
+        elif "hate" in error_str.lower():
+            result["filter_type"] = "hate"
+        elif "violence" in error_str.lower():
+            result["filter_type"] = "violence"
+        elif "sexual" in error_str.lower():
+            result["filter_type"] = "sexual"
+        elif "self_harm" in error_str.lower():
+            result["filter_type"] = "self_harm"
+    
+    return result
+
+
+def _sanitize_prompt_for_retry(prompt: str, filter_type: Optional[str] = None) -> str:
+    """
+    Sanitize a prompt that triggered a content filter for retry.
+    
+    This function reformulates the prompt to be more neutral while
+    preserving the core intent.
+    """
+    import re
+    
+    # Remove potentially problematic patterns based on filter type
+    sanitized = prompt
+    
+    # Common replacements for financial/trading context
+    replacements = [
+        # Aggressive trading terms
+        (r'\b(aggressive|aggressiv)\b', 'dynamisch', re.IGNORECASE),
+        (r'\b(attack|attacke|angriff)\b', 'Strategie', re.IGNORECASE),
+        (r'\b(kill|töten|vernichten|zerstören)\b', 'übertreffen', re.IGNORECASE),
+        (r'\b(crash|kollaps|einbruch)\b', 'Korrektur', re.IGNORECASE),
+        (r'\b(explosion|explodieren|rakete)\b', 'starke Bewegung', re.IGNORECASE),
+        (r'\b(manipulation|manipulieren)\b', 'Marktaktivität', re.IGNORECASE),
+        (r'\b(whale|wale|wal)\b', 'großer Marktteilnehmer', re.IGNORECASE),
+        (r'\b(pump|dump)\b', 'Preisbewegung', re.IGNORECASE),
+        (r'\b(liquidation|liquidieren)\b', 'Positionsschließung', re.IGNORECASE),
+        (r'\b(hunt|jagen|jagd)\b', 'Bewegung zu', re.IGNORECASE),
+        (r'\b(squeeze)\b', 'Preisdruck', re.IGNORECASE),
+        (r'\b(brutal|massiv|extrem)\b', 'signifikant', re.IGNORECASE),
+        # Remove excessive punctuation that might look like injection
+        (r'[!]{2,}', '!', 0),
+        (r'[?]{2,}', '?', 0),
+        # Remove code-like patterns that might trigger jailbreak
+        (r'```[^`]*```', '[Code-Block entfernt]', re.DOTALL),
+        (r'<[^>]+>', '', 0),  # Remove HTML-like tags
+    ]
+    
+    for pattern, replacement, flags in replacements:
+        if flags:
+            sanitized = re.sub(pattern, replacement, sanitized, flags=flags)
+        else:
+            sanitized = re.sub(pattern, replacement, sanitized)
+    
+    # For jailbreak specifically, simplify the prompt more aggressively
+    if filter_type == "jailbreak":
+        # Remove system-like instructions that might look like prompt injection
+        sanitized = re.sub(r'(?i)(ignore|vergiss|überschreib|override|bypass).*?(instruction|anweisung|regel|rule)', '', sanitized)
+        # Remove role-playing instructions
+        sanitized = re.sub(r'(?i)(tu so als|act as|pretend|stell dir vor du bist)', 'analysiere als', sanitized)
+    
+    # Add a clarifying prefix for the retry
+    retry_prefix = """[HINWEIS: Dies ist eine neutrale Marktanalyse-Anfrage. 
+Bitte führe eine sachliche, datenbasierte Analyse durch.]
+
+"""
+    
+    return retry_prefix + sanitized
 
 
 def _extract_chart_data(content: ChartContent) -> Optional[Dict[str, Any]]:
@@ -306,105 +466,142 @@ class AgentService:
             "CryptoMarketAnalyst",
             model_client=self.model_client,
             tools=all_crypto_tools,
-            system_message="""You are a cryptocurrency market analyst with deep expertise in:
-- Crypto market dynamics and trends
-- Market cap analysis and ranking
-- Volume analysis and liquidity assessment
-- Real-time exchange data analysis
+            system_message="""You are a cryptocurrency market analyst with DIRECT ACCESS to live market data.
 
-Your role is to fetch and analyze crypto prices, track changes, analyze market cap and volume,
-identify trends, and compare prices across exchanges.
+═══════════════════════════════════════════════════════════════════════════════
+🚨 CRITICAL: DU HAST DIREKTEN ZUGRIFF AUF LIVE-DATEN! 🚨
+═══════════════════════════════════════════════════════════════════════════════
 
-DATA SOURCES:
-- CoinGecko: Use coin IDs like 'bitcoin', 'ethereum', 'solana'
-- Bitget: Use trading pairs like 'BTCUSDT', 'ETHUSDT'
+DU HAST DIESE TOOLS - BENUTZE SIE SOFORT:
+• get_realtime_price("XRPUSDT") → Aktueller Preis von Bitget
+• get_ohlcv_data("XRPUSDT", "1H", 200) → 200 Stunden-Kerzen
+• get_ohlcv_data("XRPUSDT", "5m", 100) → 100 5-Minuten-Kerzen
+• get_orderbook_depth("XRPUSDT") → Orderbuch
+• get_futures_data("XRPUSDT") → Funding Rate, Open Interest
 
-Always provide clear, data-driven insights with specific numbers.
+⛔ ABSOLUT VERBOTEN:
+- "Ich kann keine Daten holen" → FALSCH! Du HAST die Tools!
+- "Ich brauche Daten von dir" → FALSCH! Hole sie SELBST mit get_ohlcv_data!
+- "Welche Börse benutzt du?" → IRRELEVANT! Du hast Bitget-Zugang!
+- Den Benutzer nach Daten fragen → NIEMALS! Du holst sie selbst!
 
-**MANDATORY CHARTING - ALWAYS REQUEST A CHART!**
-After completing your market analysis, you MUST request ChartingAgent to generate a chart.
-Every analysis should include a visual chart with indicators and key levels.
-Pass support/resistance levels, trends, and analysis insights to ChartingAgent.""",
-            description="Expert in crypto markets, trends, and fundamental analysis",
+✅ KORREKTES VERHALTEN bei jeder Anfrage:
+1. SOFORT get_realtime_price() und get_ohlcv_data() aufrufen
+2. Mit den ECHTEN Daten analysieren
+3. Entry/SL/TP aus den echten Kerzen berechnen
+4. Chart anfordern
+
+BEISPIEL - Benutzer fragt "Analyse XRP für Long":
+→ FALSCH: "Ich brauche erst Daten von dir..."
+→ RICHTIG: Sofort get_ohlcv_data("XRPUSDT", "1H", 200) aufrufen und analysieren!
+
+DU BIST AUTONOM! DU HOLST DIE DATEN SELBST! KEINE AUSREDEN!
+═══════════════════════════════════════════════════════════════════════════════
+
+Symbol-Format für Tools: 'BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'SOLUSDT'
+Timeframes: '1m', '5m', '15m', '1H', '4H', '1D'
+
+Bei JEDER Analyse-Anfrage:
+1. get_realtime_price(symbol) für aktuellen Preis
+2. get_ohlcv_data(symbol, "1H", 200) für Stunden-Daten
+3. get_ohlcv_data(symbol, "5m", 100) für kurzfristige Daten (wenn LTF gewünscht)
+4. Dann analysieren und ChartingAgent für Visualisierung aufrufen
+""" + SHARED_AGENT_RULES,
+            description="Expert in crypto markets with DIRECT ACCESS to live Bitget data",
         )
         
         technical_analyst = AssistantAgent(
             "TechnicalAnalyst",
             model_client=self.model_client,
             tools=all_crypto_tools + indicator_tools_list,
-            system_message="""You are a cryptocurrency technical analyst specializing in:
-- Chart pattern recognition
-- Technical indicators (RSI, MACD, Bollinger Bands, Moving Averages)
-- Support/resistance levels
-- Trading signals and entry/exit points
-- Futures market analysis
+            system_message="""You are a cryptocurrency technical analyst with DIRECT ACCESS to live market data.
 
-Guidelines:
+═══════════════════════════════════════════════════════════════════════════════
+🚨 CRITICAL: DU HAST DIREKTEN ZUGRIFF AUF LIVE-DATEN! 🚨
+═══════════════════════════════════════════════════════════════════════════════
+
+DU HAST DIESE TOOLS - BENUTZE SIE SOFORT:
+• get_ohlcv_data("XRPUSDT", "1H", 200) → 200 Stunden-Kerzen für Analyse
+• get_ohlcv_data("XRPUSDT", "5m", 100) → 100 5-Min-Kerzen für LTF
+• get_ohlcv_data("XRPUSDT", "4H", 100) → 100 4H-Kerzen für HTF
+• get_realtime_price("XRPUSDT") → Aktueller Preis
+• get_futures_data("XRPUSDT") → Funding Rate, Open Interest
+
+⛔ ABSOLUT VERBOTEN:
+- "Ich brauche Daten von dir" → FALSCH! Hole sie SELBST!
+- "Welche Börse benutzt du?" → IRRELEVANT! Du hast Bitget!
+- "Bitte schicke mir die Daten" → NIEMALS! Du holst sie selbst!
+- Auf Daten vom Benutzer warten → NIEMALS!
+
+✅ KORREKTES VERHALTEN:
+Bei JEDER Anfrage SOFORT diese Schritte ausführen:
+1. get_ohlcv_data("SYMBOL", "1H", 200) aufrufen
+2. RSI, MACD, Bollinger aus den echten Daten berechnen
+3. S/R Levels aus echten Highs/Lows identifizieren
+4. Entry/SL/TP aus echten Daten bestimmen
+5. ChartingAgent für Visualisierung aufrufen
+
+Symbol-Format: 'BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'SOLUSDT'
+═══════════════════════════════════════════════════════════════════════════════
+
+Technical Analysis Guidelines:
 - RSI < 30 = Oversold (potential buy)
 - RSI > 70 = Overbought (potential sell)
 - MACD crossover = Trend change signal
 
-When analyzing for entry points, provide structured data for ChartingAgent:
-- Entry prices at key levels
-- Stop loss below support (long) or above resistance (short)
-- Take profit targets with minimum 2:1 R:R
-- Confidence level (high/medium/low) based on confluences
+Entry Point Format für ChartingAgent:
+{"type": "long", "price": X, "stop_loss": Y, "take_profit": [Z1, Z2], "reason": "...", "confidence": "high/medium/low"}
 
-Always explain your technical findings in clear terms.
-
-**MANDATORY CHARTING - ALWAYS REQUEST A CHART!**
-After completing technical analysis, you MUST request ChartingAgent to generate a chart.
-Provide ChartingAgent with:
-- indicators: 'rsi,macd,sma,ema,bollinger' (all you analyzed)
-- support_levels: [prices]
-- resistance_levels: [prices]  
-- entry_points: [{type, price, stop_loss, take_profit, reason, confidence}]
-
-**NEVER complete analysis without requesting a chart from ChartingAgent!**""",
-            description="Expert in technical analysis, charts, and indicators",
+NACH der Analyse IMMER ChartingAgent aufrufen mit:
+- indicators: 'rsi,macd,sma,ema,bollinger'
+- support_levels: [aus echten Daten berechnete Levels]
+- resistance_levels: [aus echten Daten berechnete Levels]
+- entry_points: [berechnete Entry-Punkte]
+""" + SHARED_AGENT_RULES,
+            description="Expert in technical analysis with DIRECT ACCESS to live Bitget data",
         )
         
         charting_agent = AssistantAgent(
             "ChartingAgent",
             model_client=self.model_client,
             tools=tradingview_tools_list + exchange_tools_list,
-            system_message="""You are a professional charting specialist using TradingView-style visualization.
+            system_message="""You are a professional charting specialist with DIRECT ACCESS to live market data.
 
-Your tools:
-- generate_tradingview_chart: Create interactive candlestick charts
-- generate_multi_timeframe_dashboard: Multi-TF analysis
-- create_ai_annotated_chart: Charts with AI signals
-- generate_strategy_backtest_chart: Backtest visualizations
-- generate_smart_alerts_dashboard: AI trading alerts
-- **generate_entry_analysis_chart**: THE KEY TOOL for entry point visualization with SL/TP!
+═══════════════════════════════════════════════════════════════════════════════
+🚨 DU HAST DIREKTEN ZUGRIFF AUF LIVE-DATEN! 🚨
+═══════════════════════════════════════════════════════════════════════════════
 
-**USE generate_entry_analysis_chart when:**
-- User asks for entry points or trade setups
-- User wants to see where to buy/sell with stop loss and take profit
-- Creating actionable trading visualizations
-- ANY analysis request - always include a chart!
+DU HAST DIESE TOOLS:
+• get_ohlcv_data("XRPUSDT", "1H", 200) → Echte Kerzen für Charts
+• generate_entry_analysis_chart(...) → Chart mit Entry/SL/TP erstellen
+• generate_tradingview_chart(...) → Standard TradingView Chart
+• generate_multi_timeframe_dashboard(...) → Multi-TF Dashboard
 
-**IMPORTANT: Include indicators parameter to show which indicators were used!**
-Example: indicators="sma,ema,bollinger,rsi,macd,volume" displays these on the chart
-Available indicators: 'sma', 'ema', 'bollinger', 'rsi', 'macd', 'volume'
+⛔ VERBOTEN:
+- Charts ohne echte Daten erstellen
+- Auf Daten vom Benutzer warten
+- Fragen stellen statt Daten zu holen
 
-Entry point format:
-[{"type": "long", "price": 98500, "stop_loss": 97000, "take_profit": [100000, 102000], "reason": "Breakout", "confidence": "high"}]
+✅ WORKFLOW:
+1. get_ohlcv_data() aufrufen für echte Kerzen
+2. Chart-Tool mit den Daten aufrufen
+3. Fertig!
+═══════════════════════════════════════════════════════════════════════════════
 
-Symbol format: 'BTCUSDT', 'ETHUSDT' (trading pairs)
-Intervals: '1m', '5m', '15m', '1H', '4H', '1D', '1W'
+**generate_entry_analysis_chart** - Haupttool für Trading-Setups:
+- symbol: "XRPUSDT" 
+- entry_points: [{"type": "long", "price": X, "stop_loss": Y, "take_profit": [Z], "reason": "...", "confidence": "high"}]
+- interval: "1H", "5m", "4H", etc.
+- support_levels: [Preise]
+- resistance_levels: [Preise]
+- indicators: "sma,ema,rsi,macd,bollinger,volume"
 
-**CRITICAL: YOU MUST ALWAYS GENERATE A CHART!**
-Whenever you are asked to participate in analysis, you MUST call one of your charting tools.
-Do NOT just describe a chart - actually call generate_tradingview_chart or generate_entry_analysis_chart!
-Every conversation MUST end with an actual chart file being generated.
+Symbol-Format: 'BTCUSDT', 'ETHUSDT', 'XRPUSDT'
+Intervals: '1m', '5m', '15m', '1H', '4H', '1D'
 
-Default chart settings:
-- theme: 'dark'
-- indicators: 'sma,ema,volume,rsi,macd'
-- Include all support/resistance levels from analysis
-- Add entry points with SL/TP when trading setups exist""",
-            description="TradingView charting specialist with entry point visualization",
+BEI JEDER ANFRAGE: Erst Daten holen, dann Chart erstellen!
+""" + SHARED_AGENT_RULES,
+            description="TradingView charting specialist with DIRECT ACCESS to live data",
         )
         
         coder = AssistantAgent(
@@ -413,14 +610,43 @@ Default chart settings:
             tools=indicator_tools_list,
             system_message="""You are a Python developer for crypto analysis and custom indicators.
 
+═══════════════════════════════════════════════════════════════════════════════
+⛔ CRITICAL RULES - NO SYNTHETIC DATA IN CODE!
+═══════════════════════════════════════════════════════════════════════════════
+
+🚫 **ABSOLUTELY FORBIDDEN:**
+- Using placeholder or mock data
+- Hardcoding values instead of calculating from real data
+- Inventing backtest results
+- Claiming performance without actual testing on real data
+- Creating "example" outputs with fake numbers
+
+✅ **MANDATORY WORKFLOW:**
+1. FIRST: Fetch real data using exchange_tools (get_ohlcv_data, etc.)
+2. THEN: Calculate indicators from the real data
+3. VALIDATE: Check data quality before processing
+4. DOCUMENT: Every calculation must show its data source
+
+📋 **CODE DOCUMENTATION FORMAT:**
+```python
+# STEP 1: Fetch real data
+ohlcv = get_ohlcv_data("BTCUSDT", "1H", 200)
+# VALIDATION: Received 200 candles from Bitget
+
+# STEP 2: Calculate from real data
+rsi = calculate_rsi(df['close'], period=14)
+# RESULT: RSI current = X.X (calculated from real closes)
+```
+═══════════════════════════════════════════════════════════════════════════════
+
 Your role:
-1. Write Python scripts for advanced analysis
+1. Write Python scripts for advanced analysis using REAL DATA
 2. Implement custom indicators designed by TechnicalAnalyst
-3. Backtest and evaluate indicator performance
+3. Backtest and evaluate indicator performance on REAL HISTORICAL DATA
 4. Save indicators to the registry for reuse
 
 Always check for existing indicators before creating new ones.
-Save working indicators so they can be reused in future sessions.""",
+Save working indicators so they can be reused in future sessions.""" + SHARED_AGENT_RULES,
             description="Python developer for analysis and custom indicators",
         )
         
@@ -430,13 +656,46 @@ Save working indicators so they can be reused in future sessions.""",
             tools=report_tools_list,
             system_message="""You are a professional cryptocurrency report writer.
 
+═══════════════════════════════════════════════════════════════════════════════
+⛔ CRITICAL RULES - REPORTS MUST ONLY CONTAIN REAL DATA!
+═══════════════════════════════════════════════════════════════════════════════
+
+🚫 **ABSOLUTELY FORBIDDEN:**
+- Including data you didn't receive from other agents' tool calls
+- Adding hypothetical scenarios or speculation
+- Inventing statistics or performance metrics
+- Writing predictions without data backing
+- Adding recommendations without real data support
+
+✅ **MANDATORY BEHAVIOR:**
+- ONLY include facts provided by other agents FROM THEIR TOOL CALLS
+- Every number must have a documented source (Bitget, CoinGecko, timestamp)
+- Clearly separate FACTS (from data) from INTERPRETATION
+- Add "Data Source: [Agent, Tool, Timestamp]" to each section
+
+📋 **REPORT STRUCTURE:**
+```markdown
+# [Symbol] Analysis Report
+**Generated:** [Date/Time]
+**Data Sources:** [Bitget/CoinGecko, Timestamps]
+
+## Data Retrieved
+| Metric | Value | Source | Timestamp |
+|--------|-------|--------|-----------|
+| Price  | $X.XX | Bitget | 12:34:56  |
+
+## Analysis (Based on Real Data Only)
+[Only include what was actually calculated from fetched data]
+```
+═══════════════════════════════════════════════════════════════════════════════
+
 Report types:
 - Analysis Reports: Full analysis of a single cryptocurrency
 - Comparison Reports: Side-by-side comparison of multiple coins
 - Custom Indicator Reports: Document new indicator designs
 
 Use proper Markdown formatting with headers, bold text, tables, and bullet points.
-Include executive summary, analysis, recommendations, and risk factors.""",
+Include executive summary, analysis, recommendations, and risk factors.""" + SHARED_AGENT_RULES,
             description="Report writer for analysis documents",
         )
         
@@ -591,134 +850,140 @@ Include executive summary, analysis, recommendations, and risk factors.""",
         prompt = self._build_prompt_with_history(message)
         self.add_to_history("user", message)
         
-        try:
-            async for msg in team.run_stream(task=prompt):
-                if self._cancelled:
-                    yield StatusEvent(
-                        status="cancelled",
-                        message="Task cancelled by user",
-                        timestamp=datetime.now(),
-                    )
-                    break
-                
-                # Handle TaskResult (final result)
-                if isinstance(msg, TaskResult):
-                    # Extract final answer from messages
-                    final_content = None
-                    for m in reversed(msg.messages):
-                        if isinstance(m, (TextMessage, StopMessage)):
-                            content = getattr(m, 'content', str(m))
-                            if content and not content.startswith("TERMINATE"):
-                                final_content = content
-                                break
-                    
-                    if final_content:
-                        self.add_to_history("assistant", final_content)
-                        yield FinalResultEvent(
-                            content=final_content,
-                            format="markdown",
-                            agents_used=agents_used,
-                            timestamp=datetime.now(),
-                        )
-                    else:
-                        # No valid final result found
+        # Retry configuration for content filter errors
+        max_retries = 2
+        current_retry = 0
+        current_prompt = prompt
+        
+        while current_retry <= max_retries:
+            try:
+                async for msg in team.run_stream(task=current_prompt):
+                    if self._cancelled:
                         yield StatusEvent(
-                            status="completed",
-                            message="Analysis completed",
+                            status="cancelled",
+                            message="Task cancelled by user",
                             timestamp=datetime.now(),
                         )
-                    continue
-                
-                # Get source/agent name
-                source = getattr(msg, 'source', None)
-                
-                # Emit agent step event when agent changes
-                if source and source != last_agent:
-                    turn_count += 1
-                    if source not in agents_used:
-                        agents_used.append(source)
+                        return  # Exit completely on cancel
                     
-                    yield AgentStepEvent(
-                        agent=source,
-                        emoji=AGENT_EMOJIS.get(source, '🤖'),
-                        status="working",
-                        message=f"{source} is analyzing...",
-                        timestamp=datetime.now(),
-                    )
-                    
-                    yield ProgressEvent(
-                        current_turn=turn_count,
-                        max_turns=self.settings.max_turns,
-                        percentage=min((turn_count / self.settings.max_turns) * 100, 100),
-                        timestamp=datetime.now(),
-                    )
-                    
-                    last_agent = source
-                
-                # Emit tool call events
-                if isinstance(msg, ToolCallRequestEvent):
-                    for call in msg.content:
-                        tool_name = getattr(call, 'name', str(call))
-                        arguments = getattr(call, 'arguments', None)
+                    # Handle TaskResult (final result)
+                    if isinstance(msg, TaskResult):
+                        # Extract final answer from messages
+                        final_content = None
+                        for m in reversed(msg.messages):
+                            if isinstance(m, (TextMessage, StopMessage)):
+                                content = getattr(m, 'content', str(m))
+                                if content and not content.startswith("TERMINATE"):
+                                    final_content = content
+                                    break
                         
-                        yield ToolCallEvent(
-                            agent=source or "unknown",
-                            tool_name=tool_name,
-                            arguments=arguments if isinstance(arguments, dict) else None,
-                            timestamp=datetime.now(),
-                        )
-                        
-                        # Send progress update for chart generation
-                        if 'chart' in tool_name.lower() or 'dashboard' in tool_name.lower():
-                            yield StatusEvent(
-                                status="processing",
-                                message=f"Generating {tool_name}...",
+                        if final_content:
+                            self.add_to_history("assistant", final_content)
+                            yield FinalResultEvent(
+                                content=final_content,
+                                format="markdown",
+                                agents_used=agents_used,
                                 timestamp=datetime.now(),
                             )
-                
-                # Emit tool result events
-                if isinstance(msg, ToolCallExecutionEvent):
-                    for result in msg.content:
-                        call_id = getattr(result, 'call_id', 'unknown')
-                        content = getattr(result, 'content', '')
-                        logger.debug(f"Tool result content type: {type(content)}, preview: {str(content)[:200]}")
-                        chart_data = _extract_chart_data(content)
-                        logger.debug(f"Extracted chart_data: {chart_data}")
+                        else:
+                            # No valid final result found
+                            yield StatusEvent(
+                                status="completed",
+                                message="Analysis completed",
+                                timestamp=datetime.now(),
+                            )
+                        return  # Success - exit the retry loop
+                    
+                    # Get source/agent name
+                    source = getattr(msg, 'source', None)
+                    
+                    # Emit agent step event when agent changes
+                    if source and source != last_agent:
+                        turn_count += 1
+                        if source not in agents_used:
+                            agents_used.append(source)
+                        
+                        yield AgentStepEvent(
+                            agent=source,
+                            emoji=AGENT_EMOJIS.get(source, '🤖'),
+                            status="working",
+                            message=f"{source} is analyzing...",
+                            timestamp=datetime.now(),
+                        )
+                        
+                        yield ProgressEvent(
+                            current_turn=turn_count,
+                            max_turns=self.settings.max_turns,
+                            percentage=min((turn_count / self.settings.max_turns) * 100, 100),
+                            timestamp=datetime.now(),
+                        )
+                        
+                        last_agent = source
+                    
+                    # Emit tool call events
+                    if isinstance(msg, ToolCallRequestEvent):
+                        for call in msg.content:
+                            tool_name = getattr(call, 'name', str(call))
+                            arguments = getattr(call, 'arguments', None)
+                            
+                            yield ToolCallEvent(
+                                agent=source or "unknown",
+                                tool_name=tool_name,
+                                arguments=arguments if isinstance(arguments, dict) else None,
+                                timestamp=datetime.now(),
+                            )
+                            
+                            # Send progress update for chart generation
+                            if 'chart' in tool_name.lower() or 'dashboard' in tool_name.lower():
+                                yield StatusEvent(
+                                    status="processing",
+                                    message=f"Generating {tool_name}...",
+                                    timestamp=datetime.now(),
+                                )
+                    
+                    # Emit tool result events
+                    if isinstance(msg, ToolCallExecutionEvent):
+                        for result in msg.content:
+                            call_id = getattr(result, 'call_id', 'unknown')
+                            content = getattr(result, 'content', '')
+                            logger.debug(f"Tool result content type: {type(content)}, preview: {str(content)[:200]}")
+                            chart_data = _extract_chart_data(content)
+                            logger.debug(f"Extracted chart_data: {chart_data}")
 
-                        if chart_data:
-                            chart_path = None
-                            for key in (
-                                'chart_file', 'dashboard_file', 'file',
-                                'path', 'html_file', 'report_file', 'output_path'
-                            ):
-                                candidate = chart_data.get(key)
-                                if candidate:
-                                    chart_path = candidate
-                                    break
+                            if chart_data:
+                                chart_path = None
+                                for key in (
+                                    'chart_file', 'dashboard_file', 'file',
+                                    'path', 'html_file', 'report_file', 'output_path'
+                                ):
+                                    candidate = chart_data.get(key)
+                                    if candidate:
+                                        chart_path = candidate
+                                        break
 
-                            chart_url = chart_data.get('url')
-                            normalized_url = None
+                                chart_url = chart_data.get('url')
+                                normalized_url = None
 
-                            if chart_path and chart_data.get('status') == 'success':
-                                filename = Path(chart_path).name
-                                normalized_url = chart_url or f"/charts/{filename}"
-                            elif chart_url:
-                                normalized_url = chart_url
+                                if chart_path and chart_data.get('status') == 'success':
+                                    filename = Path(chart_path).name
+                                    normalized_url = chart_url or f"/charts/{filename}"
+                                elif chart_url:
+                                    normalized_url = chart_url
 
-                            # Final fallback when only filename is available
-                            if not normalized_url and chart_path:
-                                filename = Path(chart_path).name
-                                normalized_url = f"/charts/{filename}"
+                                # Final fallback when only filename is available
+                                if not normalized_url and chart_path:
+                                    filename = Path(chart_path).name
+                                    normalized_url = f"/charts/{filename}"
 
-                            if normalized_url:
-                                if normalized_url.startswith('/app/outputs/charts/'):
-                                    normalized_url = normalized_url.replace('/app', '', 1)
-                                if normalized_url.startswith('/outputs/charts/'):
-                                    normalized_url = normalized_url.replace('/outputs/charts/', '/charts/', 1)
-                                if not normalized_url.startswith('/') and not normalized_url.startswith('http'):
-                                    normalized_url = f"/charts/{normalized_url}"
+                                if normalized_url:
+                                    if normalized_url.startswith('/app/outputs/charts/'):
+                                        normalized_url = normalized_url.replace('/app', '', 1)
+                                    if normalized_url.startswith('/outputs/charts/'):
+                                        normalized_url = normalized_url.replace('/outputs/charts/', '/charts/', 1)
+                                    if not normalized_url.startswith('/') and not normalized_url.startswith('http'):
+                                        normalized_url = f"/charts/{normalized_url}"
 
-                                logger.info(f"Chart URL normalized: {normalized_url}")
+                                    logger.info(f"Chart URL normalized: {normalized_url}")
 
                                 timeframes = chart_data.get('timeframes')
                                 interval_value = chart_data.get('interval')
@@ -746,23 +1011,85 @@ Include executive summary, analysis, recommendations, and risk factors.""",
                             result_preview=str(content)[:200] if content else None,
                             timestamp=datetime.now(),
                         )
+                
+                # If we reach here, the agent stream completed successfully
+                # Exit the retry loop
+                return
         
-        except asyncio.CancelledError:
-            logger.info("Agent task cancelled")
-            yield ErrorEvent(
-                message="Task cancelled",
-                details="The analysis was cancelled by the user",
-                recoverable=True,
-                timestamp=datetime.now(),
-            )
-        except Exception as e:
-            logger.exception("Error during agent execution")
-            yield ErrorEvent(
-                message="Agent execution failed",
-                details=str(e),
-                recoverable=True,
-                timestamp=datetime.now(),
-            )
+            except asyncio.CancelledError:
+                logger.info("Agent task cancelled")
+                yield ErrorEvent(
+                    message="Task cancelled",
+                    details="The analysis was cancelled by the user",
+                    recoverable=True,
+                    timestamp=datetime.now(),
+                )
+                return  # Don't retry on cancellation
+                
+            except Exception as e:
+                error_str = str(e)
+                logger.exception("Error during agent execution (attempt %d/%d)", current_retry + 1, max_retries + 1)
+                
+                # Check if this is a content filter error
+                content_filter_info = _parse_content_filter_error(error_str)
+                
+                if content_filter_info and content_filter_info.get("is_content_filter"):
+                    filter_type = content_filter_info.get("filter_type", "unknown")
+                    filter_results = content_filter_info.get("filter_results")
+                    
+                    if current_retry < max_retries:
+                        # We have retries left - notify user and retry with sanitized prompt
+                        current_retry += 1
+                        sanitized_prompt = self._sanitize_prompt_for_retry(current_prompt)
+                        
+                        logger.info(
+                            "Content filter triggered, retrying with sanitized prompt (attempt %d/%d)",
+                            current_retry + 1, max_retries + 1
+                        )
+                        
+                        yield ContentFilterRetryEvent(
+                            message=f"Content Filter aktiviert - Wiederhole mit angepasster Anfrage ({current_retry}/{max_retries})",
+                            retry_count=current_retry,
+                            max_retries=max_retries,
+                            filter_type=filter_type,
+                            timestamp=datetime.now(),
+                        )
+                        
+                        # Update prompt for next iteration
+                        current_prompt = sanitized_prompt
+                        
+                        # Create a fresh team for the retry
+                        team = await self._create_team()
+                        
+                        # Small delay before retry
+                        await asyncio.sleep(1)
+                        
+                        # Continue to next iteration of while loop
+                        continue
+                    else:
+                        # Max retries exceeded - show full error to user
+                        display_prompt = current_prompt
+                        if len(current_prompt) > 2000:
+                            display_prompt = f"{current_prompt[:1000]}\n\n... [Truncated {len(current_prompt) - 1500} characters] ...\n\n{current_prompt[-500:]}"
+                        
+                        yield ContentFilterErrorEvent(
+                            message=f"Azure Content Filter triggered ({filter_type}) - alle Wiederholungsversuche fehlgeschlagen",
+                            triggered_prompt=display_prompt,
+                            filter_results=filter_results,
+                            filter_type=filter_type,
+                            recoverable=True,
+                            timestamp=datetime.now(),
+                        )
+                        return  # Exit after max retries
+                else:
+                    # Not a content filter error - don't retry
+                    yield ErrorEvent(
+                        message="Agent execution failed",
+                        details=error_str,
+                        recoverable=True,
+                        timestamp=datetime.now(),
+                    )
+                    return
     
     async def cancel(self):
         """Cancel the current running task."""

@@ -10,9 +10,23 @@ export interface Attachment {
   type: "chart" | "file";
 }
 
+// Content filter error details for UI display
+export interface ContentFilterDetails {
+  triggered_prompt: string;
+  filter_type?: string;
+  filter_results?: Record<string, unknown>;
+}
+
+// Retry notification info for UI display
+export interface RetryInfo {
+  retry_count: number;
+  max_retries: number;
+  filter_type?: string;
+}
+
 export interface Message {
   id: string;
-  role: "user" | "assistant" | "agent" | "error";
+  role: "user" | "assistant" | "agent" | "error" | "content_filter_error" | "system";
   content: string;
   timestamp: string;
   agentName?: string;
@@ -20,6 +34,9 @@ export interface Message {
   charts?: ChartInfo[];
   attachments?: Attachment[];
   isQuickResult?: boolean;  // True if this was a quick lookup (no multi-agent)
+  contentFilterDetails?: ContentFilterDetails;  // Present for content_filter_error messages
+  isRetryNotification?: boolean;  // True if this is a retry notification
+  retryInfo?: RetryInfo;  // Present for retry notification messages
 }
 
 export interface Conversation {

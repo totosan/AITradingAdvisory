@@ -188,6 +188,38 @@ export function useWebSocket() {
           setLoading(false);
         }
         break;
+      
+      case 'content_filter_error':
+        // Special handling for content filter errors with prompt display
+        addMessage({
+          role: 'content_filter_error',
+          content: event.message,
+          timestamp: event.timestamp,
+          contentFilterDetails: {
+            triggered_prompt: event.triggered_prompt,
+            filter_type: event.filter_type,
+            filter_results: event.filter_results,
+          },
+        });
+        setProcessing(false);
+        setLoading(false);
+        break;
+      
+      case 'content_filter_retry':
+        // Show a status message that retry is happening
+        addMessage({
+          role: 'system',
+          content: `⏳ ${event.message}`,
+          timestamp: event.timestamp,
+          isRetryNotification: true,
+          retryInfo: {
+            retry_count: event.retry_count,
+            max_retries: event.max_retries,
+            filter_type: event.filter_type,
+          },
+        });
+        // Don't stop processing - we're still working
+        break;
     }
   }, [
     addMessage, setLoading, setProcessing, setProgress,

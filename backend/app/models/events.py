@@ -77,6 +77,27 @@ class ErrorEvent(BaseModel):
     timestamp: datetime
 
 
+class ContentFilterErrorEvent(BaseModel):
+    """Event when Azure content filter is triggered."""
+    type: Literal["content_filter_error"] = "content_filter_error"
+    message: str
+    triggered_prompt: str  # The prompt that triggered the filter
+    filter_results: Optional[Dict[str, Any]] = None  # Detailed filter results
+    filter_type: Optional[str] = None  # e.g., 'jailbreak', 'hate', 'violence'
+    recoverable: bool = True
+    timestamp: datetime
+
+
+class ContentFilterRetryEvent(BaseModel):
+    """Event when retrying after content filter - informs user of retry."""
+    type: Literal["content_filter_retry"] = "content_filter_retry"
+    message: str
+    retry_attempt: int
+    max_retries: int
+    filter_type: Optional[str] = None
+    timestamp: datetime
+
+
 class ProgressEvent(BaseModel):
     """Event for progress updates."""
     type: Literal["progress"] = "progress"
@@ -133,6 +154,8 @@ ServerEvent = (
     FinalResultEvent | 
     QuickResultEvent |
     ErrorEvent | 
+    ContentFilterErrorEvent |
+    ContentFilterRetryEvent |
     ProgressEvent |
     StatusEvent
 )
