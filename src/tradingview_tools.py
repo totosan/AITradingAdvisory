@@ -794,7 +794,7 @@ def generate_entry_analysis_chart(
                 "position": marker_config["position"],
                 "color": conf_colors.get(confidence, marker_config["color"]),
                 "shape": marker_config["shape"],
-                "text": f"{entry_type.upper()} @ ${entry_price:,.2f}",
+                "text": f"{entry_type.upper()} @ ${entry_price:,.4f}",
             })
             
             # Price lines for entry
@@ -1015,9 +1015,9 @@ def _generate_entry_analysis_html(
                 <span class="entry-type">{'🟢 LONG' if entry_type == 'long' else '🔴 SHORT'}</span>
                 <span class="entry-confidence confidence-{entry.get('confidence', 'medium')}">{entry.get('confidence', 'medium').upper()}</span>
             </div>
-            <div class="entry-price">Entry: ${entry.get('price', 0):,.2f}</div>
+            <div class="entry-price">Entry: ${entry.get('price', 0):,.4f}</div>
             <div class="entry-levels">
-                <span class="sl">SL: ${float(entry.get('stop_loss', 0)):,.2f}</span>
+                <span class="sl">SL: ${float(entry.get('stop_loss', 0)):,.4f}</span>
                 <span class="tp">TP: {entry.get('take_profit', 'N/A')}</span>
             </div>
             {f'<div class="risk-reward">{rr}</div>' if rr and show_risk_reward else ''}
@@ -2128,9 +2128,947 @@ def generate_trade_rows(trades: List[Dict]) -> str:
         <tr>
             <td>{datetime.fromtimestamp(t.get("entry_time", 0)).strftime("%Y-%m-%d %H:%M") if t.get("entry_time") else "N/A"}</td>
             <td>{t.get("type", "N/A").upper()}</td>
-            <td>${t.get("entry_price", 0):,.2f}</td>
-            <td>${t.get("exit_price", 0):,.2f}</td>
+            <td>${t.get("entry_price", 0):,.4f}</td>
+            <td>${t.get("exit_price", 0):,.4f}</td>
             <td class="{profit_class}">{'+' if t.get("profit", 0) > 0 else ''}{t.get("profit", 0):.2f}%</td>
         </tr>
         '''
     return rows
+
+
+# =============================================================================
+# STRATEGY VISUALIZATION CHART
+# =============================================================================
+# This is the FINAL chart that agents should create after completing their analysis.
+# It consolidates all findings into a single professional visualization.
+
+def generate_strategy_visualization(
+    symbol: Annotated[str, "Trading pair symbol (e.g., 'BTCUSDT', 'ETHUSDT')"],
+    strategy_summary: Annotated[str, """JSON object describing the complete trading strategy. Structure:
+        {
+            "name": "Strategy name (e.g., 'RSI + MACD Confluence')",
+            "bias": "bullish" | "bearish" | "neutral",
+            "confidence": "high" | "medium" | "low",
+            "timeframe": "Primary analysis timeframe",
+            "description": "Brief strategy description",
+            "key_observations": ["observation 1", "observation 2", ...],
+            "risk_management": "Description of risk management approach"
+        }
+    """],
+    entry_setups: Annotated[str, """JSON array of entry setups identified by the analysis:
+        [
+            {
+                "type": "long" | "short",
+                "trigger_price": price level that triggers entry,
+                "entry_zone": {"min": lower_price, "max": upper_price} (optional range),
+                "stop_loss": SL price,
+                "take_profit": [TP1, TP2, TP3] or single TP,
+                "position_size": "percentage of portfolio (e.g., '2%')",
+                "trigger_condition": "What condition triggers this entry",
+                "invalidation": "What would invalidate this setup",
+                "confidence": "high" | "medium" | "low"
+            }
+        ]
+    """],
+    technical_levels: Annotated[str, """JSON object with key technical levels:
+        {
+            "support": [price1, price2, ...],
+            "resistance": [price1, price2, ...],
+            "pivot_point": price (optional),
+            "fibonacci_levels": {"0.382": price, "0.5": price, "0.618": price} (optional),
+            "trend_lines": [{"start_time": timestamp, "start_price": price, "end_time": timestamp, "end_price": price}] (optional)
+        }
+    """],
+    indicators_used: Annotated[str, """Comma-separated list of indicators that were analyzed:
+        'rsi,macd,sma,ema,bollinger,volume,atr,stochastic,obv,vwap'
+    """] = "rsi,macd,volume",
+    indicator_signals: Annotated[Optional[str], """JSON object with current indicator readings/signals:
+        {
+            "rsi": {"value": 65, "signal": "neutral", "note": "approaching overbought"},
+            "macd": {"value": 150, "signal": "bullish", "note": "bullish crossover"},
+            "trend": {"short_term": "bullish", "medium_term": "bullish", "long_term": "neutral"}
+        }
+    """] = None,
+    market_context: Annotated[Optional[str], """JSON object with broader market context:
+        {
+            "btc_correlation": "high" | "medium" | "low",
+            "market_sentiment": "fear" | "neutral" | "greed",
+            "volume_profile": "above_average" | "average" | "below_average",
+            "volatility": "high" | "medium" | "low",
+            "notable_events": ["event1", "event2"]
+        }
+    """] = None,
+    interval: Annotated[str, "Chart interval: '5m', '15m', '1H', '4H', '1D'"] = "1H",
+) -> str:
+    """
+    Generate a comprehensive strategy visualization chart that consolidates all agent findings.
+    
+    THIS IS THE FINAL CHART that should be created at the END of every analysis!
+    It brings together all insights from the multi-agent analysis into a single,
+    professional visualization that the user can reference for trading decisions.
+    
+    The chart includes:
+    - Candlestick chart with current price action
+    - All entry setups with entry/SL/TP levels clearly marked
+    - Support and resistance zones
+    - Active indicators overlay
+    - Strategy summary panel with bias indicator
+    - Key observations sidebar
+    - Risk/reward calculations for each setup
+    
+    WORKFLOW:
+    1. Agents analyze the market (CryptoMarketAnalyst, TechnicalAnalyst)
+    2. Entry points and levels are identified
+    3. ChartingAgent calls THIS function to visualize everything
+    4. User receives a complete, actionable chart
+    
+    Args:
+        symbol: The trading pair being analyzed
+        strategy_summary: Complete strategy overview as JSON
+        entry_setups: Array of entry setups identified
+        technical_levels: Support/resistance and other key levels
+        indicators_used: Which indicators were analyzed
+        indicator_signals: Current readings from indicators
+        market_context: Broader market context information
+        interval: Chart timeframe
+        
+    Returns:
+        JSON with chart path and comprehensive strategy summary
+    """
+    try:
+        _ensure_output_dir()
+        
+        # Parse all JSON inputs
+        strategy = json.loads(strategy_summary) if isinstance(strategy_summary, str) else strategy_summary
+        entries = json.loads(entry_setups) if isinstance(entry_setups, str) else entry_setups
+        levels = json.loads(technical_levels) if isinstance(technical_levels, str) else technical_levels
+        signals = json.loads(indicator_signals) if indicator_signals else {}
+        context = json.loads(market_context) if market_context else {}
+        indicator_list = [i.strip().lower() for i in indicators_used.split(",")] if indicators_used else []
+        
+        # Fetch real OHLCV data
+        candle_data = []
+        current_price = 0
+        try:
+            from exchange_tools import get_ohlcv_data
+            
+            interval_map = {
+                "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+                "1H": "1h", "1h": "1h", "4H": "4h", "4h": "4h",
+                "1D": "1d", "1d": "1d", "1W": "1w", "1w": "1w",
+            }
+            exchange_interval = interval_map.get(interval, "1h")
+            
+            result = json.loads(get_ohlcv_data(symbol, exchange_interval, limit=200))
+            bars = result.get("data") or result.get("candles")
+            if bars:
+                for b in bars:
+                    ts = b["timestamp"]
+                    if isinstance(ts, str):
+                        ts = int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp())
+                    else:
+                        ts = int(ts) // 1000
+                    candle_data.append({
+                        "time": ts,
+                        "open": float(b["open"]),
+                        "high": float(b["high"]),
+                        "low": float(b["low"]),
+                        "close": float(b["close"]),
+                        "volume": float(b.get("volume", 0)),
+                    })
+                if candle_data:
+                    current_price = candle_data[-1]["close"]
+        except Exception as e:
+            pass
+        
+        # Build price lines from entry setups
+        price_lines = []
+        markers = []
+        entry_cards = []
+        
+        for i, entry in enumerate(entries):
+            entry_type = entry.get("type", "long").lower()
+            trigger_price = float(entry.get("trigger_price", 0))
+            stop_loss = entry.get("stop_loss")
+            take_profit = entry.get("take_profit")
+            confidence = entry.get("confidence", "medium")
+            
+            # Color based on type and confidence
+            conf_colors = {"high": "#00e676", "medium": "#ffc107", "low": "#ff9800"}
+            entry_color = conf_colors.get(confidence, "#26a69a" if entry_type == "long" else "#ef5350")
+            
+            # Entry zone or single price
+            entry_zone = entry.get("entry_zone")
+            if entry_zone:
+                price_lines.append({
+                    "price": float(entry_zone.get("min", trigger_price)),
+                    "color": entry_color,
+                    "lineWidth": 1,
+                    "lineStyle": 0,
+                    "axisLabelVisible": False,
+                })
+                price_lines.append({
+                    "price": float(entry_zone.get("max", trigger_price)),
+                    "color": entry_color,
+                    "lineWidth": 1,
+                    "lineStyle": 0,
+                    "title": f"Entry Zone {i+1}",
+                })
+            else:
+                price_lines.append({
+                    "price": trigger_price,
+                    "color": entry_color,
+                    "lineWidth": 2,
+                    "lineStyle": 0,
+                    "title": f"Entry {i+1}",
+                })
+            
+            # Stop loss
+            if stop_loss:
+                sl_price = float(stop_loss)
+                price_lines.append({
+                    "price": sl_price,
+                    "color": "#ff5722",
+                    "lineWidth": 1,
+                    "lineStyle": 2,
+                    "title": f"SL {i+1}",
+                })
+            
+            # Take profit levels
+            if take_profit:
+                tps = take_profit if isinstance(take_profit, list) else [take_profit]
+                for j, tp in enumerate(tps):
+                    tp_price = float(tp)
+                    price_lines.append({
+                        "price": tp_price,
+                        "color": "#4caf50",
+                        "lineWidth": 1,
+                        "lineStyle": 2,
+                        "title": f"TP{j+1}",
+                    })
+            
+            # Calculate R:R
+            rr_ratio = None
+            if stop_loss and take_profit:
+                sl = float(stop_loss)
+                tp = float(take_profit[0]) if isinstance(take_profit, list) else float(take_profit)
+                if entry_type == "long":
+                    risk = trigger_price - sl
+                    reward = tp - trigger_price
+                else:
+                    risk = sl - trigger_price
+                    reward = trigger_price - tp
+                if risk > 0:
+                    rr_ratio = reward / risk
+            
+            # Add marker at trigger price
+            if candle_data:
+                closest = min(candle_data[-30:], key=lambda c: abs(c["close"] - trigger_price))
+                markers.append({
+                    "time": closest["time"],
+                    "position": "belowBar" if entry_type == "long" else "aboveBar",
+                    "color": entry_color,
+                    "shape": "arrowUp" if entry_type == "long" else "arrowDown",
+                    "text": f"{entry_type.upper()} {i+1}",
+                })
+            
+            entry_cards.append({
+                "type": entry_type,
+                "trigger_price": trigger_price,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "position_size": entry.get("position_size", "N/A"),
+                "trigger_condition": entry.get("trigger_condition", ""),
+                "invalidation": entry.get("invalidation", ""),
+                "confidence": confidence,
+                "rr_ratio": rr_ratio,
+            })
+        
+        # Add support levels
+        for s in levels.get("support", []):
+            price_lines.append({
+                "price": float(s),
+                "color": "#2196f3",
+                "lineWidth": 1,
+                "lineStyle": 1,
+                "title": "S",
+            })
+        
+        # Add resistance levels
+        for r in levels.get("resistance", []):
+            price_lines.append({
+                "price": float(r),
+                "color": "#9c27b0",
+                "lineWidth": 1,
+                "lineStyle": 1,
+                "title": "R",
+            })
+        
+        # Generate filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        strategy_name = strategy.get("name", "Strategy").replace(" ", "_")[:20]
+        filename = f"{symbol}_{strategy_name}_{timestamp}.html"
+        filepath = CHART_OUTPUT_DIR / filename
+        
+        # Generate the HTML
+        html_content = _generate_strategy_visualization_html(
+            symbol=symbol,
+            interval=interval,
+            strategy=strategy,
+            entries=entry_cards,
+            levels=levels,
+            signals=signals,
+            context=context,
+            indicators=indicator_list,
+            candle_data=candle_data,
+            markers=markers,
+            price_lines=price_lines,
+            current_price=current_price,
+        )
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        
+        return json.dumps({
+            "status": "success",
+            "message": f"Strategy visualization generated: {strategy.get('name', 'Analysis')}",
+            "chart_file": str(filepath.absolute()),
+            "filename": filename,
+            "url": f"/charts/{filename}",
+            "symbol": symbol,
+            "interval": interval,
+            "strategy": {
+                "name": strategy.get("name"),
+                "bias": strategy.get("bias"),
+                "confidence": strategy.get("confidence"),
+            },
+            "entry_count": len(entry_cards),
+            "entries": entry_cards,
+            "support_levels": levels.get("support", []),
+            "resistance_levels": levels.get("resistance", []),
+            "current_price": current_price,
+            "open_command": f"open {filepath.absolute()}",
+        }, indent=2)
+        
+    except Exception as e:
+        import traceback
+        return json.dumps({
+            "status": "error",
+            "message": f"Failed to generate strategy visualization: {str(e)}",
+            "traceback": traceback.format_exc(),
+        })
+
+
+def _generate_strategy_visualization_html(
+    symbol: str,
+    interval: str,
+    strategy: Dict,
+    entries: List[Dict],
+    levels: Dict,
+    signals: Dict,
+    context: Dict,
+    indicators: List[str],
+    candle_data: List[Dict],
+    markers: List[Dict],
+    price_lines: List[Dict],
+    current_price: float,
+) -> str:
+    """Generate the HTML for the strategy visualization chart."""
+    
+    # Theme colors
+    bg_color = "#1e222d"
+    text_color = "#d1d4dc"
+    grid_color = "#2a2e39"
+    panel_bg = "#262b3d"
+    up_color = "#26a69a"
+    down_color = "#ef5350"
+    
+    # Bias colors
+    bias_colors = {
+        "bullish": "#26a69a",
+        "bearish": "#ef5350",
+        "neutral": "#888888",
+    }
+    bias = strategy.get("bias", "neutral")
+    bias_color = bias_colors.get(bias, "#888888")
+    bias_icon = "📈" if bias == "bullish" else "📉" if bias == "bearish" else "➡️"
+    
+    # Confidence badge
+    confidence = strategy.get("confidence", "medium")
+    conf_colors = {"high": "#00e676", "medium": "#ffc107", "low": "#ff9800"}
+    conf_color = conf_colors.get(confidence, "#ffc107")
+    
+    # Build entry cards HTML
+    entry_cards_html = ""
+    for i, entry in enumerate(entries):
+        entry_type = entry.get("type", "long")
+        type_icon = "🟢" if entry_type == "long" else "🔴"
+        type_class = "long" if entry_type == "long" else "short"
+        rr = entry.get("rr_ratio")
+        rr_text = f"R:R 1:{rr:.2f}" if rr else ""
+        
+        tp_text = ""
+        if entry.get("take_profit"):
+            tps = entry["take_profit"] if isinstance(entry["take_profit"], list) else [entry["take_profit"]]
+            tp_text = " / ".join([f"${float(t):,.4f}" for t in tps[:3]])
+        
+        entry_cards_html += f'''
+        <div class="entry-card {type_class}">
+            <div class="entry-header">
+                <span class="entry-type">{type_icon} {entry_type.upper()}</span>
+                <span class="entry-confidence" style="background: {conf_colors.get(entry.get('confidence', 'medium'), '#ffc107')}40; color: {conf_colors.get(entry.get('confidence', 'medium'), '#ffc107')}">{entry.get('confidence', 'medium').upper()}</span>
+            </div>
+            <div class="entry-details">
+                <div class="entry-row">
+                    <span class="label">Entry:</span>
+                    <span class="value">${float(entry.get('trigger_price', 0)):,.4f}</span>
+                </div>
+                <div class="entry-row">
+                    <span class="label">Stop Loss:</span>
+                    <span class="value sl">${float(entry.get('stop_loss', 0)):,.4f}</span>
+                </div>
+                <div class="entry-row">
+                    <span class="label">Take Profit:</span>
+                    <span class="value tp">{tp_text}</span>
+                </div>
+                {f'<div class="entry-row"><span class="label">Position:</span><span class="value">{entry.get("position_size", "N/A")}</span></div>' if entry.get("position_size") else ''}
+                {f'<div class="rr-badge">{rr_text}</div>' if rr_text else ''}
+            </div>
+            {f'<div class="entry-trigger">📌 {entry.get("trigger_condition", "")}</div>' if entry.get("trigger_condition") else ''}
+            {f'<div class="entry-invalidation">⚠️ {entry.get("invalidation", "")}</div>' if entry.get("invalidation") else ''}
+        </div>
+        '''
+    
+    # Build observations list
+    observations_html = ""
+    for obs in strategy.get("key_observations", []):
+        observations_html += f'<li>{obs}</li>'
+    
+    # Build indicator signals panel
+    signals_html = ""
+    for ind_name, ind_data in signals.items():
+        if isinstance(ind_data, dict):
+            signal = ind_data.get("signal", "neutral")
+            signal_color = up_color if signal == "bullish" else down_color if signal == "bearish" else "#888"
+            value = ind_data.get("value", "N/A")
+            note = ind_data.get("note", "")
+            signals_html += f'''
+            <div class="signal-item">
+                <span class="signal-name">{ind_name.upper()}</span>
+                <span class="signal-value">{value}</span>
+                <span class="signal-badge" style="background: {signal_color}40; color: {signal_color}">{signal.upper()}</span>
+                {f'<span class="signal-note">{note}</span>' if note else ''}
+            </div>
+            '''
+    
+    # Build market context panel
+    context_html = ""
+    if context:
+        context_items = []
+        if "market_sentiment" in context:
+            sent = context["market_sentiment"]
+            sent_color = up_color if sent == "greed" else down_color if sent == "fear" else "#888"
+            context_items.append(f'<span class="context-badge" style="background: {sent_color}40; color: {sent_color}">Sentiment: {sent.upper()}</span>')
+        if "volatility" in context:
+            context_items.append(f'<span class="context-badge">Volatility: {context["volatility"].upper()}</span>')
+        if "volume_profile" in context:
+            context_items.append(f'<span class="context-badge">Volume: {context["volume_profile"].replace("_", " ").title()}</span>')
+        context_html = " ".join(context_items)
+    
+    # JSON data for JavaScript
+    candles_js = json.dumps(candle_data) if candle_data else "[]"
+    volumes_js = json.dumps([
+        {"time": c["time"], "value": c.get("volume", 0), "color": up_color if c["close"] >= c["open"] else down_color}
+        for c in candle_data
+    ]) if candle_data else "[]"
+    markers_js = json.dumps(markers)
+    price_lines_js = json.dumps(price_lines)
+    
+    # Determine price color based on last two candles
+    price_color = up_color
+    if len(candle_data) >= 2:
+        if candle_data[-1]["close"] < candle_data[-2]["close"]:
+            price_color = down_color
+    
+    html_content = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{symbol} - {strategy.get("name", "Strategy Analysis")}</title>
+    {LIGHTWEIGHT_CHARTS_SCRIPT}
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: {bg_color};
+            color: {text_color};
+            min-height: 100vh;
+        }}
+        
+        .layout {{
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            grid-template-rows: auto 1fr auto;
+            gap: 15px;
+            padding: 15px;
+            height: 100vh;
+        }}
+        
+        .header {{
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: {panel_bg};
+            border-radius: 12px;
+            border: 1px solid {grid_color};
+        }}
+        
+        .header-left {{
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }}
+        
+        .symbol-info {{
+            display: flex;
+            flex-direction: column;
+        }}
+        
+        .symbol-name {{
+            font-size: 24px;
+            font-weight: 700;
+        }}
+        
+        .symbol-price {{
+            font-size: 18px;
+            color: {price_color};
+        }}
+        
+        .strategy-badge {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 20px;
+            background: {bias_color}20;
+            border: 1px solid {bias_color}40;
+            border-radius: 8px;
+        }}
+        
+        .bias-indicator {{
+            font-size: 28px;
+        }}
+        
+        .strategy-name {{
+            font-size: 16px;
+            font-weight: 600;
+            color: {bias_color};
+        }}
+        
+        .confidence-badge {{
+            padding: 4px 12px;
+            background: {conf_color}30;
+            color: {conf_color};
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        
+        .header-right {{
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }}
+        
+        .interval-badge {{
+            padding: 8px 16px;
+            background: {grid_color};
+            border-radius: 6px;
+            font-weight: 600;
+        }}
+        
+        .chart-area {{
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }}
+        
+        .chart-container {{
+            flex: 1;
+            min-height: 400px;
+            background: {panel_bg};
+            border-radius: 12px;
+            border: 1px solid {grid_color};
+            overflow: hidden;
+        }}
+        
+        #main-chart {{
+            width: 100%;
+            height: 100%;
+        }}
+        
+        .sidebar {{
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            overflow-y: auto;
+        }}
+        
+        .panel {{
+            background: {panel_bg};
+            border-radius: 12px;
+            border: 1px solid {grid_color};
+            padding: 15px;
+        }}
+        
+        .panel-title {{
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: {text_color};
+        }}
+        
+        .entry-card {{
+            background: {bg_color};
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-left: 3px solid;
+        }}
+        
+        .entry-card.long {{
+            border-left-color: {up_color};
+        }}
+        
+        .entry-card.short {{
+            border-left-color: {down_color};
+        }}
+        
+        .entry-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }}
+        
+        .entry-type {{
+            font-weight: 600;
+            font-size: 14px;
+        }}
+        
+        .entry-confidence {{
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+        }}
+        
+        .entry-details {{
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }}
+        
+        .entry-row {{
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+        }}
+        
+        .entry-row .label {{
+            color: #888;
+        }}
+        
+        .entry-row .value {{
+            font-weight: 500;
+        }}
+        
+        .entry-row .sl {{
+            color: #ff5722;
+        }}
+        
+        .entry-row .tp {{
+            color: #4caf50;
+        }}
+        
+        .rr-badge {{
+            margin-top: 8px;
+            padding: 4px 8px;
+            background: #2196f330;
+            color: #2196f3;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-align: center;
+        }}
+        
+        .entry-trigger, .entry-invalidation {{
+            margin-top: 8px;
+            font-size: 11px;
+            padding: 6px 8px;
+            background: {grid_color};
+            border-radius: 4px;
+        }}
+        
+        .entry-invalidation {{
+            color: #ffc107;
+        }}
+        
+        .observations-list {{
+            list-style: none;
+            padding: 0;
+        }}
+        
+        .observations-list li {{
+            padding: 8px 0;
+            border-bottom: 1px solid {grid_color};
+            font-size: 13px;
+            line-height: 1.4;
+        }}
+        
+        .observations-list li:last-child {{
+            border-bottom: none;
+        }}
+        
+        .observations-list li::before {{
+            content: "•";
+            color: {bias_color};
+            font-weight: bold;
+            margin-right: 8px;
+        }}
+        
+        .signal-item {{
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 0;
+            border-bottom: 1px solid {grid_color};
+        }}
+        
+        .signal-item:last-child {{
+            border-bottom: none;
+        }}
+        
+        .signal-name {{
+            font-weight: 600;
+            font-size: 12px;
+            min-width: 60px;
+        }}
+        
+        .signal-value {{
+            font-size: 14px;
+            font-weight: 500;
+        }}
+        
+        .signal-badge {{
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+        }}
+        
+        .signal-note {{
+            width: 100%;
+            font-size: 11px;
+            color: #888;
+            margin-top: 4px;
+        }}
+        
+        .context-badges {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }}
+        
+        .context-badge {{
+            padding: 4px 10px;
+            background: {grid_color};
+            border-radius: 4px;
+            font-size: 11px;
+        }}
+        
+        .footer {{
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            background: {panel_bg};
+            border-radius: 12px;
+            font-size: 12px;
+            color: #888;
+        }}
+        
+        .risk-note {{
+            color: #ffc107;
+        }}
+        
+        @media (max-width: 1024px) {{
+            .layout {{
+                grid-template-columns: 1fr;
+            }}
+            .sidebar {{
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+            }}
+        }}
+        
+        @media (max-width: 768px) {{
+            .sidebar {{
+                grid-template-columns: 1fr;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-left">
+                <div class="symbol-info">
+                    <span class="symbol-name">📊 {symbol}</span>
+                    <span class="symbol-price">${current_price:,.4f}</span>
+                </div>
+                <div class="strategy-badge">
+                    <span class="bias-indicator">{bias_icon}</span>
+                    <div>
+                        <div class="strategy-name">{strategy.get("name", "Strategy")}</div>
+                        <div style="font-size: 12px; opacity: 0.7;">{bias.upper()} BIAS</div>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <span class="confidence-badge">{confidence.upper()} CONFIDENCE</span>
+                <span class="interval-badge">⏱️ {interval}</span>
+            </div>
+        </div>
+        
+        <!-- Chart Area -->
+        <div class="chart-area">
+            <div class="chart-container">
+                <div id="main-chart"></div>
+            </div>
+        </div>
+        
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <!-- Entry Setups Panel -->
+            <div class="panel">
+                <div class="panel-title">🎯 Entry Setups ({len(entries)})</div>
+                {entry_cards_html if entry_cards_html else '<p style="color: #888; font-size: 13px;">No entry setups defined</p>'}
+            </div>
+            
+            <!-- Key Observations Panel -->
+            <div class="panel">
+                <div class="panel-title">&#128161; Key Observations</div>
+                <ul class="observations-list">
+                    {observations_html if observations_html else '<li style="color: #888;">No observations recorded</li>'}
+                </ul>
+            </div>
+            
+            <!-- Indicator Signals Panel -->
+            {f'<div class="panel"><div class="panel-title">&#128200; Indicator Signals</div>{signals_html}</div>' if signals_html else ''}
+            
+            <!-- Market Context Panel -->
+            {f'<div class="panel"><div class="panel-title">&#127760; Market Context</div><div class="context-badges">{context_html}</div></div>' if context_html else ''}
+            
+            <!-- Risk Management Panel -->
+            {f'<div class="panel"><div class="panel-title">&#9888; Risk Management</div><p style="font-size: 13px; line-height: 1.5;">' + strategy.get("risk_management", "Follow standard risk management: max 1-2% per trade.") + '</p></div>' if strategy.get("risk_management") else ''}
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <span>Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | MagenticOne AI Analysis</span>
+            <span class="risk-note">&#9888; This is not financial advice. Always do your own research.</span>
+        </div>
+    </div>
+    
+    <script>
+        const container = document.getElementById('main-chart');
+        
+        const chart = LightweightCharts.createChart(container, {{
+            autoSize: true,
+            layout: {{
+                background: {{ color: '{panel_bg}' }},
+                textColor: '{text_color}',
+            }},
+            grid: {{
+                vertLines: {{ color: '{grid_color}' }},
+                horzLines: {{ color: '{grid_color}' }},
+            }},
+            crosshair: {{
+                mode: LightweightCharts.CrosshairMode.Normal,
+            }},
+            rightPriceScale: {{
+                borderColor: '{grid_color}',
+            }},
+            timeScale: {{
+                borderColor: '{grid_color}',
+                timeVisible: true,
+                secondsVisible: false,
+            }},
+        }});
+        
+        // Candlestick series
+        const candlestickSeries = chart.addCandlestickSeries({{
+            upColor: '{up_color}',
+            downColor: '{down_color}',
+            borderDownColor: '{down_color}',
+            borderUpColor: '{up_color}',
+            wickDownColor: '{down_color}',
+            wickUpColor: '{up_color}',
+        }});
+        
+        // Volume series
+        const volumeSeries = chart.addHistogramSeries({{
+            priceFormat: {{ type: 'volume' }},
+            priceScaleId: 'volume',
+        }});
+        chart.priceScale('volume').applyOptions({{
+            scaleMargins: {{ top: 0.8, bottom: 0 }},
+        }});
+        
+        // Load data
+        const candles = {candles_js};
+        const volumes = {volumes_js};
+        const markers = {markers_js};
+        const priceLines = {price_lines_js};
+        
+        if (candles.length > 0) {{
+            candlestickSeries.setData(candles);
+            volumeSeries.setData(volumes);
+        }}
+        
+        // Add markers
+        if (markers.length > 0) {{
+            candlestickSeries.setMarkers(markers);
+        }}
+        
+        // Add price lines
+        priceLines.forEach(line => {{
+            candlestickSeries.createPriceLine({{
+                price: line.price,
+                color: line.color,
+                lineWidth: line.lineWidth || 1,
+                lineStyle: line.lineStyle || 0,
+                axisLabelVisible: true,
+                title: line.title || '',
+            }});
+        }});
+        
+        // Fit content
+        setTimeout(() => {{
+            chart.timeScale().fitContent();
+        }}, 100);
+    </script>
+</body>
+</html>
+'''
+    
+    return html_content

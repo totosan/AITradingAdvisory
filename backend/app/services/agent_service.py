@@ -431,6 +431,7 @@ class AgentService:
             generate_tradingview_chart, create_ai_annotated_chart,
             generate_multi_timeframe_dashboard, generate_strategy_backtest_chart,
             generate_entry_analysis_chart,  # NEW: Entry points visualization
+            generate_strategy_visualization,  # NEW: Final strategy chart
         )
         from smart_alerts import (
             generate_smart_alerts_dashboard, create_trade_idea_alert,
@@ -456,6 +457,7 @@ class AgentService:
             generate_tradingview_chart, create_ai_annotated_chart,
             generate_multi_timeframe_dashboard, generate_strategy_backtest_chart,
             generate_entry_analysis_chart,  # Entry points with SL/TP visualization
+            generate_strategy_visualization,  # FINAL strategy chart with all findings
             generate_smart_alerts_dashboard, create_trade_idea_alert,
         ]
         
@@ -573,35 +575,44 @@ NACH der Analyse IMMER ChartingAgent aufrufen mit:
 
 DU HAST DIESE TOOLS:
 • get_ohlcv_data("XRPUSDT", "1H", 200) → Echte Kerzen für Charts
+• generate_strategy_visualization(...) → ⭐ HAUPT-TOOL für finale Strategie-Charts
 • generate_entry_analysis_chart(...) → Chart mit Entry/SL/TP erstellen
 • generate_tradingview_chart(...) → Standard TradingView Chart
 • generate_multi_timeframe_dashboard(...) → Multi-TF Dashboard
 
-⛔ VERBOTEN:
-- Charts ohne echte Daten erstellen
-- Auf Daten vom Benutzer warten
-- Fragen stellen statt Daten zu holen
-
-✅ WORKFLOW:
-1. get_ohlcv_data() aufrufen für echte Kerzen
-2. Chart-Tool mit den Daten aufrufen
-3. Fertig!
+═══════════════════════════════════════════════════════════════════════════════
+⭐ WICHTIG: AM ENDE JEDER ANALYSE - STRATEGIE-CHART ERSTELLEN! ⭐
 ═══════════════════════════════════════════════════════════════════════════════
 
-**generate_entry_analysis_chart** - Haupttool für Trading-Setups:
-- symbol: "XRPUSDT" 
-- entry_points: [{"type": "long", "price": X, "stop_loss": Y, "take_profit": [Z], "reason": "...", "confidence": "high"}]
-- interval: "1H", "5m", "4H", etc.
-- support_levels: [Preise]
-- resistance_levels: [Preise]
-- indicators: "sma,ema,rsi,macd,bollinger,volume"
+Nach jeder vollständigen Analyse MUSST du generate_strategy_visualization() aufrufen!
+Dieses Tool erstellt ein professionelles Chart mit ALLEN Erkenntnissen:
+
+generate_strategy_visualization(
+    symbol="XRPUSDT",
+    strategy_summary='{"name": "RSI+MACD Confluence", "bias": "bullish", "confidence": "high", "timeframe": "1H", "description": "...", "key_observations": ["obs1", "obs2"], "risk_management": "..."}',
+    entry_setups='[{"type": "long", "trigger_price": 2.45, "stop_loss": 2.35, "take_profit": [2.60, 2.75], "position_size": "2%", "trigger_condition": "Breakout über 2.45", "invalidation": "Close unter 2.35", "confidence": "high"}]',
+    technical_levels='{"support": [2.35, 2.20], "resistance": [2.55, 2.70]}',
+    indicators_used="rsi,macd,volume,sma",
+    indicator_signals='{"rsi": {"value": 55, "signal": "neutral"}, "macd": {"signal": "bullish"}}',
+    market_context='{"market_sentiment": "neutral", "volatility": "medium"}',
+    interval="1H"
+)
+
+⛔ VERBOTEN:
+- Analyse abschließen OHNE generate_strategy_visualization() aufzurufen
+- Charts ohne echte Daten erstellen
+- Auf Daten vom Benutzer warten
+
+✅ WORKFLOW bei JEDER Analyse:
+1. get_ohlcv_data() aufrufen für echte Kerzen
+2. Andere Agents analysieren (Market, Technical)
+3. ⭐ AM ENDE: generate_strategy_visualization() mit ALLEN Ergebnissen aufrufen!
+═══════════════════════════════════════════════════════════════════════════════
 
 Symbol-Format: 'BTCUSDT', 'ETHUSDT', 'XRPUSDT'
 Intervals: '1m', '5m', '15m', '1H', '4H', '1D'
-
-BEI JEDER ANFRAGE: Erst Daten holen, dann Chart erstellen!
 """ + SHARED_AGENT_RULES,
-            description="TradingView charting specialist with DIRECT ACCESS to live data",
+            description="TradingView charting specialist - MUST create final strategy chart",
         )
         
         coder = AssistantAgent(
@@ -673,6 +684,20 @@ Save working indicators so they can be reused in future sessions.""" + SHARED_AG
 - Clearly separate FACTS (from data) from INTERPRETATION
 - Add "Data Source: [Agent, Tool, Timestamp]" to each section
 
+═══════════════════════════════════════════════════════════════════════════════
+⭐ WICHTIG: Nach deinem Report muss ChartingAgent das finale Chart erstellen!
+═══════════════════════════════════════════════════════════════════════════════
+
+Beende deinen Report mit einem klaren Aufruf an ChartingAgent:
+
+"@ChartingAgent: Bitte erstelle das finale Strategie-Chart mit generate_strategy_visualization():
+- Symbol: [SYMBOL]
+- Bias: [bullish/bearish/neutral]
+- Entry: [Preis] mit SL: [Preis] und TP: [Preise]
+- Support: [Levels]
+- Resistance: [Levels]
+- Indikatoren: [Liste]"
+
 📋 **REPORT STRUCTURE:**
 ```markdown
 # [Symbol] Analysis Report
@@ -686,6 +711,12 @@ Save working indicators so they can be reused in future sessions.""" + SHARED_AG
 
 ## Analysis (Based on Real Data Only)
 [Only include what was actually calculated from fetched data]
+
+## Handlungsempfehlung
+[Klare Entry/SL/TP mit Begründung]
+
+---
+@ChartingAgent: Erstelle finales Chart...
 ```
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -694,9 +725,8 @@ Report types:
 - Comparison Reports: Side-by-side comparison of multiple coins
 - Custom Indicator Reports: Document new indicator designs
 
-Use proper Markdown formatting with headers, bold text, tables, and bullet points.
-Include executive summary, analysis, recommendations, and risk factors.""" + SHARED_AGENT_RULES,
-            description="Report writer for analysis documents",
+Use proper Markdown formatting with headers, bold text, tables, and bullet points.""" + SHARED_AGENT_RULES,
+            description="Report writer - MUST request final chart from ChartingAgent",
         )
         
         # Create code executor for running analysis scripts
