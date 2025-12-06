@@ -275,7 +275,7 @@ def _extract_chart_data(content: ChartContent) -> Optional[Dict[str, Any]]:
 
 class AgentService:
     """
-    Service for running AgenticTrades agents with streaming output.
+    Service for running AITradingAdvisory agents with streaming output.
     
     Converts the Rich console output pattern used in src/main.py
     to WebSocket-friendly events for real-time frontend updates.
@@ -406,7 +406,7 @@ class AgentService:
     
     async def _create_team(self) -> MagenticOneGroupChat:
         """
-        Create the AgenticTrades team with all specialized crypto agents.
+        Create the AITradingAdvisory team with all specialized crypto agents.
         
         This mirrors the team setup in src/main.py but configured for API use.
         """

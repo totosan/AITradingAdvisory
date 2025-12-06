@@ -1,4 +1,4 @@
-# Backend Dockerfile for AgenticTrades Web API
+# Backend Dockerfile for AITradingAdvisory Web API
 # Multi-stage build for smaller production image
 
 # ============================================================================

@@ -1,5 +1,5 @@
 """
-Exchange Tools for AgenticTrades Agents
+Exchange Tools for AITradingAdvisory Agents
 
 This module provides tool functions that agents can use to interact with
 cryptocurrency exchanges. It wraps the ExchangeManager to provide

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # ==========================================================================
     # API Settings
     # ==========================================================================
-    api_title: str = "AgenticTrades Crypto Analysis API"
+    api_title: str = "AITradingAdvisory Crypto Analysis API"
     api_version: str = "1.0.0"
     debug: bool = False
     

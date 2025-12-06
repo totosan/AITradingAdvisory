@@ -1,11 +1,11 @@
 #!/bin/bash
-# Quick Start Script for AgenticTrades Web Platform
+# Quick Start Script for AITradingAdvisory Web Platform
 # Run this in a fresh terminal to start the system
 
 set -e  # Exit on error
 
-echo "🚀 Starting AgenticTrades Web Platform"
-echo "======================================"
+echo "🚀 Starting AITradingAdvisory Web Platform"
+echo "========================================="
 echo ""
 
 # Check if we're in the right directory

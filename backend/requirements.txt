@@ -1,4 +1,4 @@
-# Backend dependencies for AgenticTrades Web API
+# Backend dependencies for AITradingAdvisory Web API
 
 # Web Framework
 fastapi>=0.109.0

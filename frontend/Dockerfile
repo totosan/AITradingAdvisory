@@ -1,4 +1,4 @@
-# Frontend Dockerfile for AgenticTrades Web UI
+# Frontend Dockerfile for AITradingAdvisory Web UI
 # Multi-stage build: Node for build, nginx for serving
 
 # ============================================================================

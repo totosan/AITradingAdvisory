@@ -1,5 +1,5 @@
 """
-Custom Indicator Registry for AgenticTrades
+Custom Indicator Registry for AITradingAdvisory
 
 This module provides persistent storage for custom indicators created during
 analysis sessions. Indicators are saved to disk and can be reused across

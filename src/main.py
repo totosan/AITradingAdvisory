@@ -1,5 +1,5 @@
 """
-AgenticTrades Crypto Analysis Platform
+AITradingAdvisory Crypto Analysis Platform
 
 A specialized multi-agent system for cryptocurrency market analysis,
 technical indicators, chart generation, and trading signal detection.
@@ -375,7 +375,7 @@ class CryptoAnalysisPlatform:
         """Display the application banner."""
         banner = """
 # 🪙 Crypto Analysis Platform
-## Powered by AgenticTrades Multi-Agent System
+## Powered by AITradingAdvisory Multi-Agent System
 
 Specialized cryptocurrency analysis with:
 - 📊 Real-time price monitoring & market data

@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# AgenticTrades Setup Script
-# This script sets up the complete environment for the AgenticTrades platform
+# AITradingAdvisory Setup Script
+# This script sets up the complete environment for the AITradingAdvisory platform
 
 set -e  # Exit on error
 
-echo "🪙 AgenticTrades - Setup Script"
-echo "==============================="
+echo "🪙 AITradingAdvisory - Setup Script"
+echo "==================================="
 echo ""
 
 # Colors for output
@@ -135,9 +135,9 @@ test_setup() {
     
     # Check if containers are running
     if docker ps | grep -q "magentic"; then
-        print_success "AgenticTrades containers are running"
+        print_success "AITradingAdvisory containers are running"
     else
-        print_error "AgenticTrades containers are not running"
+        print_error "AITradingAdvisory containers are not running"
     fi
 }
 

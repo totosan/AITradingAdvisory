@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: AgenticTrades Crypto Analysis API
+  title: AITradingAdvisory Crypto Analysis API
   description: |
     Multi-agent cryptocurrency analysis platform API.
     
@@ -11,7 +11,7 @@ info:
     - WebSocket streaming for live agent updates
   version: 1.0.0
   contact:
-    name: AgenticTrades Team
+    name: AITradingAdvisory Team
   license:
     name: MIT
 

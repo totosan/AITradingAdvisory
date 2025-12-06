@@ -1,5 +1,5 @@
 """
-Crypto Analysis Tools for AgenticTrades
+Crypto Analysis Tools for AITradingAdvisory
 
 This module provides tools for cryptocurrency analysis including:
 - Real-time price fetching (via exchange providers)

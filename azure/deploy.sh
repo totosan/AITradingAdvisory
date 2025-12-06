@@ -1,5 +1,5 @@
 #!/bin/bash
-# AgenticTrades Azure Deployment Script
+# AITradingAdvisory Azure Deployment Script
 # Deploys the application to Azure Container Apps using Bicep
 #
 # Prerequisites:
@@ -31,7 +31,7 @@ IMAGE_TAG="latest"
 # ============================================================================
 
 show_help() {
-    echo "AgenticTrades Azure Deployment"
+    echo "AITradingAdvisory Azure Deployment"
     echo ""
     echo "Usage: $0 [options]"
     echo ""

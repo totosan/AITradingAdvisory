@@ -14,4 +14,4 @@ sleep 10
 docker exec magentic-ollama ollama pull deepseek-r1:1.5b
 
 echo "Model setup complete!"
-echo "You can now run the AgenticTrades application."
+echo "You can now run the AITradingAdvisory application."

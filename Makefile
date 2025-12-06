@@ -2,8 +2,8 @@
 
 # Default target - show help
 help:
-	@echo "🪙 AgenticTrades Crypto Analysis Platform"
-	@echo "========================================"
+	@echo "🪙 AITradingAdvisory Crypto Analysis Platform"
+	@echo "==========================================="
 	@echo ""
 	@echo "🚀 Quick Start (from host terminal):"
 	@echo "  make dev           Start with Docker (recommended)"

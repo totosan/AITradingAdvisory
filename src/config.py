@@ -1,5 +1,5 @@
 """
-Configuration module for AgenticTrades
+Configuration module for AITradingAdvisory
 """
 import os
 from typing import Optional
