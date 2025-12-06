@@ -1,5 +1,5 @@
 """
-TradingView Chart Tools for MagenticOne
+TradingView Chart Tools for AgenticTrades
 
 This module provides tools for generating professional TradingView-style charts
 using the TradingView Charting Library concepts. It creates interactive HTML charts
@@ -304,7 +304,7 @@ def generate_tradingview_chart(
     <div class="chart-header">
         <div>
             <div class="chart-title">📊 {chart_title}</div>
-            <div class="chart-info">Interval: {interval} | Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | MagenticOne Analysis</div>
+            <div class="chart-info">Interval: {interval} | Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | AgenticTrades Analysis</div>
         </div>
         <div class="toolbar">
             <button onclick="setInterval('1m')">1m</button>
@@ -1224,7 +1224,7 @@ def _generate_entry_analysis_html(
                 📊 {title}
                 <span class="title-badge">ENTRY ANALYSIS</span>
             </div>
-            <div class="info">Interval: {interval} | Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | MagenticOne AI</div>
+            <div class="info">Interval: {interval} | Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | AgenticTrades AI</div>
         </div>
     </div>
     
@@ -2984,7 +2984,7 @@ def _generate_strategy_visualization_html(
         
         <!-- Footer -->
         <div class="footer">
-            <span>Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | MagenticOne AI Analysis</span>
+            <span>Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | AgenticTrades AI Analysis</span>
             <span class="risk-note">&#9888; This is not financial advice. Always do your own research.</span>
         </div>
     </div>

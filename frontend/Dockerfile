@@ -1,4 +1,4 @@
-# Frontend Dockerfile for MagenticOne Web UI
+# Frontend Dockerfile for AgenticTrades Web UI
 # Multi-stage build: Node for build, nginx for serving
 
 # ============================================================================

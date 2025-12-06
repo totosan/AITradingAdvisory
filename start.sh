@@ -1,11 +1,11 @@
 #!/bin/bash
-# Quick Start Script for MagenticOne Web Platform
+# Quick Start Script for AgenticTrades Web Platform
 # Run this in a fresh terminal to start the system
 
 set -e  # Exit on error
 
-echo "🚀 Starting MagenticOne Web Platform"
-echo "===================================="
+echo "🚀 Starting AgenticTrades Web Platform"
+echo "======================================"
 echo ""
 
 # Check if we're in the right directory

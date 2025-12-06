@@ -2,7 +2,7 @@
 
 # Default target - show help
 help:
-	@echo "🪙 MagenticOne Crypto Analysis Platform"
+	@echo "🪙 AgenticTrades Crypto Analysis Platform"
 	@echo "========================================"
 	@echo ""
 	@echo "🚀 Quick Start (from host terminal):"

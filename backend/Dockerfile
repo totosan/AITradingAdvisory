@@ -1,4 +1,4 @@
-# Backend Dockerfile for MagenticOne Web API
+# Backend Dockerfile for AgenticTrades Web API
 # Multi-stage build for smaller production image
 
 # ============================================================================

@@ -1,5 +1,5 @@
 """
-TradingView UDF Server for MagenticOne
+TradingView UDF Server for AgenticTrades
 
 This module provides a Universal Data Feed (UDF) compatible server
 that serves real-time and historical market data to TradingView charts.

@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# MagenticOne Showcase Setup Script
-# This script sets up the complete environment for the MagenticOne showcase
+# AgenticTrades Setup Script
+# This script sets up the complete environment for the AgenticTrades platform
 
 set -e  # Exit on error
 
-echo "🧲 MagenticOne Showcase - Setup Script"
-echo "======================================="
+echo "🪙 AgenticTrades - Setup Script"
+echo "==============================="
 echo ""
 
 # Colors for output
@@ -135,9 +135,9 @@ test_setup() {
     
     # Check if containers are running
     if docker ps | grep -q "magentic"; then
-        print_success "MagenticOne containers are running"
+        print_success "AgenticTrades containers are running"
     else
-        print_error "MagenticOne containers are not running"
+        print_error "AgenticTrades containers are not running"
     fi
 }
 

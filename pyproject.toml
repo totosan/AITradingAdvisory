@@ -1,7 +1,7 @@
 [project]
-name = "magentic-one-showcase"
+name = "agentic-trades"
 version = "0.1.0"
-description = "Research Assistant & Report Generator - A comprehensive showcase of MagenticOne's multi-agent capabilities"
+description = "Research Assistant & Report Generator - A comprehensive showcase of AgenticTrades multi-agent capabilities"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -1,4 +1,4 @@
-# Backend dependencies for MagenticOne Web API
+# Backend dependencies for AgenticTrades Web API
 
 # Web Framework
 fastapi>=0.109.0

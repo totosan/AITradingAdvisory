@@ -1,5 +1,5 @@
 """
-Crypto Analysis Tools for MagenticOne
+Crypto Analysis Tools for AgenticTrades
 
 This module provides tools for cryptocurrency analysis including:
 - Real-time price fetching (via exchange providers)

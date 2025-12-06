@@ -1,5 +1,5 @@
 #!/bin/bash
-# MagenticOne Azure Deployment Script
+# AgenticTrades Azure Deployment Script
 # Deploys the application to Azure Container Apps using Bicep
 #
 # Prerequisites:
@@ -31,7 +31,7 @@ IMAGE_TAG="latest"
 # ============================================================================
 
 show_help() {
-    echo "MagenticOne Azure Deployment"
+    echo "AgenticTrades Azure Deployment"
     echo ""
     echo "Usage: $0 [options]"
     echo ""

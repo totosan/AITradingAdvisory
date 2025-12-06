@@ -1,5 +1,5 @@
 """
-MagenticOne Crypto Analysis - FastAPI Backend
+AgenticTrades Crypto Analysis - FastAPI Backend
 
 Main application entry point with REST and WebSocket support.
 """
@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager for startup/shutdown."""
     # Startup
     settings = get_settings()
-    print(f"🚀 Starting MagenticOne API")
+    print(f"🚀 Starting AgenticTrades API")
     print(f"   Provider: {settings.llm_provider}")
     print(f"   Model: {settings.ollama_model if settings.llm_provider == 'ollama' else settings.azure_openai_deployment}")
     print(f"   WebSocket: ws://localhost:8000/ws/stream")
@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    print("👋 Shutting down MagenticOne API")
+    print("👋 Shutting down AgenticTrades API")
 
 
 def create_app() -> FastAPI:
@@ -91,7 +91,7 @@ app = create_app()
 async def root():
     """Root endpoint with API information."""
     return {
-        "name": "MagenticOne Crypto Analysis API",
+        "name": "AgenticTrades Crypto Analysis API",
         "version": "1.0.0",
         "docs": "/docs",
         "health": "/api/v1/health",

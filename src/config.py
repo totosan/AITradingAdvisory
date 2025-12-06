@@ -1,5 +1,5 @@
 """
-Configuration module for MagenticOne Showcase
+Configuration module for AgenticTrades
 """
 import os
 from typing import Optional

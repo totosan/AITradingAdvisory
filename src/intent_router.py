@@ -20,7 +20,7 @@ Usage:
     if intent.type == IntentType.SIMPLE_LOOKUP:
         result = await router.execute_simple(user_message, intent)
     else:
-        # Use full MagenticOne team
+        # Use full AgenticTrades team
         ...
 """
 import re

@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-This is a **MagenticOne multi-agent system** migrated from console to web application. The platform uses AutoGen's orchestrator pattern where specialized AI agents collaborate to analyze crypto markets.
+This is an **AgenticTrades multi-agent system** migrated from console to web application. The platform uses AutoGen's MagenticOne orchestrator pattern where specialized AI agents collaborate to analyze crypto markets.
 
 ### Current Architecture (Web Mode Active)
 
