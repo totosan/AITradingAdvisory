@@ -50,9 +50,9 @@ ENV API_URL=http://backend:8500 \
 # Expose port
 EXPOSE 80
 
-# Health check
+# Health check - use 127.0.0.1 instead of localhost to avoid IPv6 issues on Alpine
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget -q --spider http://localhost/health || exit 1
+    CMD wget -q --spider http://127.0.0.1/health || exit 1
 
 # Use entrypoint to inject runtime config
 ENTRYPOINT ["/docker-entrypoint.sh"]

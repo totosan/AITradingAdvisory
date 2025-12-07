@@ -54,6 +54,14 @@ services:
       - LOG_LEVEL=DEBUG
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # DNS servers for external hostname resolution (needed in Docker-in-Docker setups)
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      - 1.1.1.1
+    volumes:
+      # Persistent storage for encrypted secrets vault
+      - backend-data:/app/data
     networks:
       - magentic-dev
 
@@ -80,3 +88,7 @@ services:
 networks:
   magentic-dev:
     driver: bridge
+
+volumes:
+  backend-data:
+    name: magentic-backend-data

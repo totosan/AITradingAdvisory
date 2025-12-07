@@ -166,6 +166,50 @@ class BitgetProvider(ExchangeProvider):
             timeout=timeout,
         )
     
+    @classmethod
+    def from_vault(cls, vault) -> "BitgetProvider":
+        """
+        Create provider from SecretsVault credentials.
+        
+        This method attempts to load credentials from the vault first,
+        falling back to environment variables if vault secrets are not available.
+        
+        Args:
+            vault: SecretsVault instance
+            
+        Returns:
+            Configured BitgetProvider instance
+        """
+        api_key = None
+        api_secret = None
+        passphrase = None
+        
+        # Try vault first
+        if vault is not None:
+            try:
+                api_key = vault.get_secret("bitget_api_key")
+                api_secret = vault.get_secret("bitget_api_secret")
+                passphrase = vault.get_secret("bitget_passphrase")
+            except Exception:
+                pass
+        
+        # Fallback to environment variables if vault doesn't have credentials
+        if not api_key:
+            api_key = os.getenv("BITGET_API_KEY")
+        if not api_secret:
+            api_secret = os.getenv("BITGET_API_SECRET")
+        if not passphrase:
+            passphrase = os.getenv("BITGET_PASSPHRASE")
+        
+        timeout = int(os.getenv("BITGET_TIMEOUT", "10"))
+        
+        return cls(
+            api_key=api_key,
+            api_secret=api_secret,
+            passphrase=passphrase,
+            timeout=timeout,
+        )
+    
     @property
     def provider_type(self) -> ProviderType:
         return ProviderType.BITGET

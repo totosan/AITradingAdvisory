@@ -669,7 +669,7 @@ def _format_price(price: float) -> str:
 
 
 def _format_single_price(symbol: str, data: Any) -> str:
-    """Format a single price result."""
+    """Format a single price result with source attribution."""
     try:
         if isinstance(data, str):
             parsed = json.loads(data)
@@ -679,6 +679,11 @@ def _format_single_price(symbol: str, data: Any) -> str:
         if isinstance(parsed, dict):
             price = parsed.get("price") or parsed.get("current_price")
             change_24h = parsed.get("change_24h") or parsed.get("price_change_24h")
+            
+            # Extract source information
+            source_info = parsed.get("_source", {})
+            provider = source_info.get("provider") or parsed.get("provider", "")
+            timestamp = source_info.get("timestamp", "")
             
             if price:
                 if isinstance(price, (int, float)):
@@ -693,6 +698,19 @@ def _format_single_price(symbol: str, data: Any) -> str:
                         output += f" ({emoji} {change_val:+.2f}%)"
                     except (ValueError, TypeError):
                         output += f" ({change_24h})"
+                
+                # Add source attribution
+                if provider:
+                    # Format timestamp if available
+                    if timestamp:
+                        # Extract just time portion if full ISO format
+                        if "T" in str(timestamp):
+                            time_part = str(timestamp).split("T")[1][:8]
+                            output += f"\n📚 _Quelle: {provider} ({time_part} UTC)_"
+                        else:
+                            output += f"\n📚 _Quelle: {provider}_"
+                    else:
+                        output += f"\n📚 _Quelle: {provider}_"
                 
                 return output
     except (json.JSONDecodeError, TypeError, ValueError):

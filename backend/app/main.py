@@ -18,6 +18,13 @@ from app.api.routes import health, chat, charts
 from app.api.routes import settings as settings_router
 from app.api.websocket import stream
 from app.core.config import get_settings
+from app.core.security import get_vault
+
+# Import exchange tools to set vault
+try:
+    from exchange_tools import set_vault as set_exchange_vault
+except ImportError:
+    set_exchange_vault = None
 
 
 @asynccontextmanager
@@ -29,6 +36,12 @@ async def lifespan(app: FastAPI):
     print(f"   Provider: {settings.llm_provider}")
     print(f"   Model: {settings.ollama_model if settings.llm_provider == 'ollama' else settings.azure_openai_deployment}")
     print(f"   WebSocket: ws://localhost:8000/ws/stream")
+    
+    # Initialize vault and set it for exchange tools
+    if set_exchange_vault is not None:
+        vault = get_vault()
+        set_exchange_vault(vault)
+        print(f"   Vault: Initialized for credential management")
     
     yield
     

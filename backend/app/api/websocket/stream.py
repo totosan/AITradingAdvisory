@@ -24,6 +24,29 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Global connection manager instance
+manager: Optional["ConnectionManager"] = None
+
+
+def get_manager() -> "ConnectionManager":
+    """Get or create the global connection manager."""
+    global manager
+    if manager is None:
+        manager = ConnectionManager()
+    return manager
+
+
+def reset_agent_service() -> None:
+    """
+    Reset all agent services to reload with new credentials.
+    
+    Called when LLM or Exchange credentials are updated via Settings UI.
+    """
+    global manager
+    if manager is not None:
+        manager.reset_all_agent_services()
+    logger.info("Agent services reset requested")
+
 
 class ConnectionManager:
     """
@@ -95,6 +118,23 @@ class ConnectionManager:
         """Register an agent service for a client."""
         self.agent_services[client_id] = agent_service
     
+    def reset_all_agent_services(self) -> None:
+        """
+        Reset all agent services to force reload with new credentials.
+        
+        This clears the model client so it will be recreated with 
+        fresh credentials from the vault on the next request.
+        """
+        for client_id, service in self.agent_services.items():
+            try:
+                service.reset_model_client()
+            except Exception as e:
+                logger.warning(f"Error resetting agent service for {client_id[:8]}...: {e}")
+        
+        # Clear all agent services to force recreation
+        self.agent_services.clear()
+        logger.info(f"All agent services reset ({len(self.agent_services)} cleared)")
+    
     async def cancel_task(self, client_id: str) -> bool:
         """Cancel a client's running task and signal the agent service."""
         cancelled = False
@@ -124,8 +164,7 @@ class ConnectionManager:
         return len(self.active_connections)
 
 
-
-manager = ConnectionManager()
+# Manager is created lazily via get_manager()
 
 
 async def process_chat_message(
@@ -180,10 +219,11 @@ async def websocket_endpoint(websocket: WebSocket):
     - Server sends: AgentStepEvent, ToolCallEvent, ResultEvent, etc.
     """
     client_id = str(uuid.uuid4())
-    await manager.connect(websocket, client_id)
+    conn_manager = get_manager()
+    await conn_manager.connect(websocket, client_id)
     
     # Send connection confirmation
-    await manager.send_event(client_id, {
+    await conn_manager.send_event(client_id, {
         "type": "status",
         "status": "connected",
         "message": f"Connected to agent service",
@@ -191,7 +231,7 @@ async def websocket_endpoint(websocket: WebSocket):
     })
     
     agent_service = AgentService()
-    manager.register_agent_service(client_id, agent_service)
+    conn_manager.register_agent_service(client_id, agent_service)
     
     try:
         while True:
@@ -203,7 +243,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
             except asyncio.TimeoutError:
                 # Send ping to keep connection alive
-                await manager.send_event(client_id, {
+                await conn_manager.send_event(client_id, {
                     "type": "ping",
                     "timestamp": datetime.now().isoformat(),
                 })
@@ -215,7 +255,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if msg_type == "chat":
                 message = payload.get("message", "").strip()
                 if not message:
-                    await manager.send_event(client_id, {
+                    await conn_manager.send_event(client_id, {
                         "type": "error",
                         "message": "Empty message",
                         "recoverable": True,
@@ -227,7 +267,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 agent_service.reset_cancellation()
                 
                 # Notify processing started
-                await manager.send_event(client_id, {
+                await conn_manager.send_event(client_id, {
                     "type": "status",
                     "status": "processing",
                     "message": f"Processing: {message[:50]}...",
@@ -236,9 +276,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 # Create task for processing
                 task = asyncio.create_task(
-                    process_chat_message(client_id, message, agent_service, manager)
+                    process_chat_message(client_id, message, agent_service, conn_manager)
                 )
-                manager.register_task(client_id, task)
+                conn_manager.register_task(client_id, task)
                 
                 # Wait for task to complete
                 try:
@@ -247,7 +287,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     pass  # Already handled in process_chat_message
                 
                 # Send idle status
-                await manager.send_event(client_id, {
+                await conn_manager.send_event(client_id, {
                     "type": "status",
                     "status": "idle",
                     "message": "Ready for next query",
@@ -255,8 +295,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
             
             elif msg_type == "cancel":
-                cancelled = await manager.cancel_task(client_id)
-                await manager.send_event(client_id, {
+                cancelled = await conn_manager.cancel_task(client_id)
+                await conn_manager.send_event(client_id, {
                     "type": "status",
                     "status": "cancelled" if cancelled else "idle",
                     "message": "Task cancelled" if cancelled else "No task to cancel",
@@ -265,13 +305,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
             
             elif msg_type == "ping":
-                await manager.send_event(client_id, {
+                await conn_manager.send_event(client_id, {
                     "type": "pong",
                     "timestamp": datetime.now().isoformat(),
                 })
             
             else:
-                await manager.send_event(client_id, {
+                await conn_manager.send_event(client_id, {
                     "type": "error",
                     "message": f"Unknown message type: {msg_type}",
                     "recoverable": True,
@@ -283,8 +323,8 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.exception(f"WebSocket error for {client_id[:8]}...: {e}")
     finally:
-        manager.cleanup_agent_service(client_id)
-        await manager.disconnect(client_id)
+        conn_manager.cleanup_agent_service(client_id)
+        await conn_manager.disconnect(client_id)
 
 
 @router.get("/ws/status")

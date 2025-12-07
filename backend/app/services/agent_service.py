@@ -295,6 +295,121 @@ class AgentService:
         self._intent_router = IntentRouter()
         self._tools: Dict[str, Any] = {}  # Lazy initialization
         self._tools_initialized = False
+        
+        # Vault for dynamic credential loading
+        self._vault = None
+        try:
+            from app.core.security import get_vault
+            self._vault = get_vault()
+        except Exception:
+            pass
+    
+    def _get_recommended_api_version(self, model: Optional[str]) -> str:
+        """
+        Get the recommended API version based on the model name.
+        
+        Different Azure OpenAI models have different API version requirements:
+        - gpt-4o and gpt-4o-mini require 2024-08-01-preview for structured outputs
+        - o1 and o3 reasoning models require 2024-12-01-preview
+        - Older models work with 2024-02-15-preview
+        """
+        MODEL_API_VERSION_MAP = {
+            "gpt-4o": "2024-08-01-preview",
+            "gpt-4o-mini": "2024-08-01-preview",
+            "gpt-4": "2024-02-15-preview",
+            "gpt-4-turbo": "2024-02-15-preview",
+            "gpt-35-turbo": "2024-02-15-preview",
+            "gpt-3.5-turbo": "2024-02-15-preview",
+            "o1": "2024-12-01-preview",
+            "o1-preview": "2024-12-01-preview",
+            "o1-mini": "2024-12-01-preview",
+            "o3-mini": "2024-12-01-preview",
+        }
+        DEFAULT_API_VERSION = "2024-08-01-preview"  # Safe default for most modern models
+        
+        if not model:
+            return DEFAULT_API_VERSION
+            
+        model_lower = model.lower()
+        
+        # Check for exact match first
+        if model_lower in MODEL_API_VERSION_MAP:
+            return MODEL_API_VERSION_MAP[model_lower]
+        
+        # Check for partial match (e.g., "gpt-4o-2024-08-06" matches "gpt-4o")
+        for key, version in MODEL_API_VERSION_MAP.items():
+            if model_lower.startswith(key):
+                return version
+        
+        return DEFAULT_API_VERSION
+    
+    def _get_llm_credentials(self) -> Dict[str, str]:
+        """
+        Get LLM credentials from vault first, fallback to environment variables.
+        
+        Uses automatic API version detection based on model name if no explicit
+        API version is configured.
+        
+        Returns:
+            Dict with api_key, endpoint, deployment, api_version
+        """
+        credentials = {
+            "api_key": None,
+            "endpoint": None,
+            "deployment": None,
+            "api_version": None,  # Will be auto-detected based on model
+        }
+        
+        explicit_api_version = False  # Track if user explicitly set API version
+        
+        # Try vault first
+        if self._vault is not None:
+            try:
+                vault_key = self._vault.get_secret("azure_openai_api_key")
+                vault_endpoint = self._vault.get_secret("azure_openai_endpoint")
+                vault_deployment = self._vault.get_secret("azure_openai_deployment")
+                vault_api_version = self._vault.get_secret("azure_openai_api_version")
+                
+                if vault_key:
+                    credentials["api_key"] = vault_key
+                if vault_endpoint:
+                    credentials["endpoint"] = vault_endpoint
+                if vault_deployment:
+                    credentials["deployment"] = vault_deployment
+                if vault_api_version:
+                    credentials["api_version"] = vault_api_version
+                    explicit_api_version = True
+                    
+                logger.info("Using LLM credentials from vault")
+            except Exception as e:
+                logger.debug(f"Could not load LLM credentials from vault: {e}")
+        
+        # Fallback to environment variables
+        if not credentials["api_key"]:
+            credentials["api_key"] = self.settings.azure_openai_api_key
+        if not credentials["endpoint"]:
+            credentials["endpoint"] = self.settings.azure_openai_endpoint
+        if not credentials["deployment"]:
+            credentials["deployment"] = self.settings.azure_openai_deployment
+        
+        # Auto-detect API version based on model if not explicitly set
+        if not explicit_api_version or not credentials["api_version"]:
+            # First check environment setting
+            env_api_version = self.settings.azure_openai_api_version
+            if env_api_version:
+                credentials["api_version"] = env_api_version
+            else:
+                # Auto-detect based on model/deployment name
+                recommended = self._get_recommended_api_version(credentials["deployment"])
+                credentials["api_version"] = recommended
+                logger.info(f"Auto-detected API version {recommended} for model {credentials['deployment']}")
+        
+        return credentials
+    
+    def reset_model_client(self) -> None:
+        """Reset the model client to reload with new credentials."""
+        self._model_client = None
+        logger.info("Model client reset - will reload on next request")
     
     @property
     def is_cancelled(self) -> bool:
@@ -373,6 +488,16 @@ class AgentService:
     
     def _create_model_client(self):
         """Create the appropriate LLM client based on configuration."""
+        # Get credentials from vault or environment
+        credentials = self._get_llm_credentials()
+        
+        # Validate we have the required credentials
+        if not credentials["api_key"] or not credentials["endpoint"]:
+            raise ValueError(
+                "Azure OpenAI credentials not configured. "
+                "Please set them via the Settings UI or in the .env file."
+            )
+        
         if self.settings.llm_provider == "azure":
             from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
             
@@ -384,12 +509,14 @@ class AgentService:
                 "family": "gpt-4",
             }
             
+            logger.info(f"Creating Azure OpenAI client with endpoint: {credentials['endpoint'][:30]}...")
+            
             return AzureOpenAIChatCompletionClient(
-                azure_deployment=self.settings.azure_openai_deployment,
-                api_version=self.settings.azure_openai_api_version,
-                azure_endpoint=self.settings.azure_openai_endpoint,
-                api_key=self.settings.azure_openai_api_key,
-                model=self.settings.azure_openai_deployment,
+                azure_deployment=credentials["deployment"],
+                api_version=credentials["api_version"],
+                azure_endpoint=credentials["endpoint"],
+                api_key=credentials["api_key"],
+                model=credentials["deployment"],
                 model_info=model_info,
             )
         else:

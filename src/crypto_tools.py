@@ -121,6 +121,14 @@ class CryptoDataFetcher:
             if not data:
                 return f"Error: Cryptocurrency '{symbol}' not found. Try common names like 'bitcoin', 'ethereum', 'solana'."
             
+            # Add source metadata for transparency
+            data['_source'] = {
+                'provider': 'CoinGecko',
+                'api': 'api.coingecko.com/api/v3',
+                'timestamp': datetime.now().isoformat(),
+                'cached': False
+            }
+            
             result = json.dumps(data, indent=2)
             api_cache.set(cache_key, result, TTLCache.TTL_PRICE)
             return result
@@ -174,7 +182,14 @@ class CryptoDataFetcher:
                 'price_change_pct': ((df_prices['price'].iloc[-1] - df_prices['price'].iloc[0]) / df_prices['price'].iloc[0] * 100),
                 'highest_price': df_prices['price'].max(),
                 'lowest_price': df_prices['price'].min(),
-                'prices': df_prices[['date', 'price']].tail(10).to_dict('records')
+                'prices': df_prices[['date', 'price']].tail(10).to_dict('records'),
+                '_source': {
+                    'provider': 'CoinGecko',
+                    'api': 'api.coingecko.com/api/v3/coins/{symbol}/market_chart',
+                    'timestamp': datetime.now().isoformat(),
+                    'interval': 'daily' if days > 1 else 'hourly',
+                    'cached': False
+                }
             }
             
             result_str = json.dumps(result, indent=2, default=str)
@@ -234,6 +249,12 @@ class CryptoDataFetcher:
                 'circulating_supply': market_data.get('circulating_supply'),
                 'total_supply': market_data.get('total_supply'),
                 'max_supply': market_data.get('max_supply'),
+                '_source': {
+                    'provider': 'CoinGecko',
+                    'api': f'api.coingecko.com/api/v3/coins/{symbol.lower()}',
+                    'timestamp': datetime.now().isoformat(),
+                    'cached': False
+                }
             }
             
             result_str = json.dumps(result, indent=2)

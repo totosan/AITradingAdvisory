@@ -36,6 +36,23 @@ logger = logging.getLogger(__name__)
 
 # Global exchange manager instance
 _exchange_manager: Optional[ExchangeManager] = None
+# Vault instance for credentials (set by backend)
+_vault_instance = None
+
+
+def set_vault(vault) -> None:
+    """
+    Set the vault instance for credential storage.
+    
+    This should be called by the backend during initialization
+    to enable UI-based credential management.
+    
+    Args:
+        vault: SecretsVault instance from app.core.security
+    """
+    global _vault_instance
+    _vault_instance = vault
+    logger.info("Vault instance set for exchange tools")
 
 
 def get_exchange_manager() -> ExchangeManager:
@@ -46,6 +63,10 @@ def get_exchange_manager() -> ExchangeManager:
     - Bitget as PRIMARY provider (real-time data, order books, futures)
     - CoinGecko as FALLBACK provider (broad coin coverage)
     - Automatic fallback enabled by default
+    
+    Credentials are loaded in this priority:
+    1. Vault (UI-saved credentials)
+    2. Environment variables (Docker/dev setup)
     
     Returns:
         Configured ExchangeManager with Bitget as default
@@ -60,8 +81,15 @@ def get_exchange_manager() -> ExchangeManager:
         )
         
         # Register Bitget FIRST (primary provider)
+        # Use vault credentials if available, otherwise env vars
         try:
-            bitget = BitgetProvider.from_env()
+            if _vault_instance is not None:
+                bitget = BitgetProvider.from_vault(_vault_instance)
+                logger.info("Bitget provider created from vault credentials")
+            else:
+                bitget = BitgetProvider.from_env()
+                logger.info("Bitget provider created from environment variables")
+            
             _exchange_manager.register_provider(ProviderType.BITGET, bitget)
             logger.info(f"Bitget provider registered (authenticated: {bitget.is_authenticated})")
         except Exception as e:
@@ -85,9 +113,15 @@ def get_exchange_manager() -> ExchangeManager:
 
 
 def reset_exchange_manager() -> None:
-    """Reset the global exchange manager (for testing)."""
+    """
+    Reset the global exchange manager.
+    
+    Call this after credentials are updated in the vault
+    to force reloading with new credentials.
+    """
     global _exchange_manager
     _exchange_manager = None
+    logger.info("Exchange manager reset - will reload on next access")
 
 
 # ==================== Market Data Tools ====================
@@ -147,6 +181,11 @@ def get_realtime_price(
             "volume_24h_usd": ticker.volume_24h_usd,
             "timestamp": ticker.timestamp.isoformat() if ticker.timestamp else None,
             "provider": ticker.provider,
+            "_source": {
+                "provider": ticker.provider,
+                "timestamp": ticker.timestamp.isoformat() if ticker.timestamp else datetime.now().isoformat(),
+                "fallback_used": provider_type is None and ticker.provider != "Bitget"
+            },
             **ticker.extra,
         }
         
@@ -224,6 +263,12 @@ def get_orderbook_depth(
             "spread": orderbook.asks[0].price - orderbook.bids[0].price if orderbook.bids and orderbook.asks else None,
             "timestamp": orderbook.timestamp.isoformat() if orderbook.timestamp else None,
             "provider": orderbook.provider,
+            "_source": {
+                "provider": orderbook.provider,
+                "timestamp": orderbook.timestamp.isoformat() if orderbook.timestamp else datetime.now().isoformat(),
+                "data_type": "orderbook",
+                "levels": limit
+            },
         }
         
         return json.dumps(result, indent=2)
@@ -298,6 +343,12 @@ def get_ohlcv_data(
                     "total_volume": sum(volumes),
                 },
                 "candles": [c.to_dict() for c in candles],
+                "_source": {
+                    "provider": "Bitget" if provider_type == ProviderType.BITGET or provider_type is None else "CoinGecko",
+                    "timestamp": datetime.now().isoformat(),
+                    "interval": interval,
+                    "data_points": len(candles)
+                },
             }
         else:
             result = {"symbol": symbol, "interval": interval, "count": 0, "candles": []}
@@ -353,6 +404,12 @@ def get_recent_market_trades(
                 "pressure": "bullish" if buy_volume > sell_volume else "bearish",
             },
             "trades": [t.to_dict() for t in trades],
+            "_source": {
+                "provider": "Bitget",
+                "timestamp": datetime.now().isoformat(),
+                "data_type": "recent_trades",
+                "trade_count": len(trades)
+            },
         }
         
         return json.dumps(result, indent=2, default=str)
@@ -412,6 +469,12 @@ def get_futures_data(
             "product_type": product_type,
             "timestamp": ticker.timestamp.isoformat() if ticker.timestamp else None,
             "provider": ticker.provider,
+            "_source": {
+                "provider": "Bitget Futures",
+                "timestamp": ticker.timestamp.isoformat() if ticker.timestamp else datetime.now().isoformat(),
+                "data_type": "futures_ticker",
+                "product_type": product_type
+            },
         }
         
         # Add funding rate interpretation
