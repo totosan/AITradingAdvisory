@@ -3,13 +3,15 @@ Chat REST API routes.
 
 Provides REST endpoints for chat interactions as a backup for clients
 that cannot use WebSocket. For real-time streaming, use /ws/stream.
+
+All routes require authentication - conversations are scoped to users.
 """
 import uuid
 from datetime import datetime
 from typing import Optional, Dict, List
 import logging
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel
 
 from app.models.requests import ChatMessage
@@ -19,15 +21,19 @@ from app.models.responses import (
     ConversationHistory,
     HistoryMessage,
 )
+from app.models.database import User
 from app.core.config import get_settings
+from app.core.dependencies import get_current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# In-memory conversation storage (replace with database in production)
-conversations: Dict[str, List[Dict]] = {}
-pending_tasks: Dict[str, Dict] = {}
+# In-memory conversation storage keyed by user_id -> conversation_id -> messages
+# Structure: {user_id: {conversation_id: [messages]}}
+# Replace with database in production (Phase 6.2)
+user_conversations: Dict[str, Dict[str, List[Dict]]] = {}
+user_pending_tasks: Dict[str, Dict[str, Dict]] = {}
 
 
 class ConversationCreate(BaseModel):
@@ -48,6 +54,7 @@ class ConversationInfo(BaseModel):
 async def send_message(
     chat_message: ChatMessage,
     background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
 ):
     """
     Send a chat message for agent processing.
@@ -57,23 +64,32 @@ async def send_message(
     conversation endpoint to poll for results.
     
     For real-time streaming, use WebSocket at /ws/stream instead.
+    
+    Requires authentication - conversations are scoped to the authenticated user.
     """
+    user_id = str(user.id)
+    
+    # Initialize user's conversation storage if new
+    if user_id not in user_conversations:
+        user_conversations[user_id] = {}
+        user_pending_tasks[user_id] = {}
+    
     # Generate or use existing conversation ID
     conversation_id = chat_message.conversation_id or str(uuid.uuid4())
     
     # Initialize conversation if new
-    if conversation_id not in conversations:
-        conversations[conversation_id] = []
+    if conversation_id not in user_conversations[user_id]:
+        user_conversations[user_id][conversation_id] = []
     
     # Store user message
-    conversations[conversation_id].append({
+    user_conversations[user_id][conversation_id].append({
         "role": "user",
         "content": chat_message.message,
         "timestamp": datetime.now().isoformat(),
     })
     
     # Mark task as pending
-    pending_tasks[conversation_id] = {
+    user_pending_tasks[user_id][conversation_id] = {
         "status": "processing",
         "started_at": datetime.now().isoformat(),
     }
@@ -81,6 +97,7 @@ async def send_message(
     # Process in background
     background_tasks.add_task(
         process_chat_message,
+        user_id,
         conversation_id,
         chat_message.message,
     )
@@ -92,7 +109,7 @@ async def send_message(
     )
 
 
-async def process_chat_message(conversation_id: str, message: str):
+async def process_chat_message(user_id: str, conversation_id: str, message: str):
     """
     Process a chat message using the agent service.
     
@@ -101,7 +118,7 @@ async def process_chat_message(conversation_id: str, message: str):
     try:
         from app.services.agent_service import AgentService
         
-        agent_service = AgentService()
+        agent_service = AgentService(user_id=user_id)
         agents_used = []
         final_content = ""
         charts_generated = []
@@ -119,7 +136,7 @@ async def process_chat_message(conversation_id: str, message: str):
                 final_content = event.content
         
         # Store assistant response
-        conversations[conversation_id].append({
+        user_conversations[user_id][conversation_id].append({
             "role": "assistant",
             "content": final_content,
             "agents_used": agents_used,
@@ -128,7 +145,7 @@ async def process_chat_message(conversation_id: str, message: str):
         })
         
         # Mark task as complete
-        pending_tasks[conversation_id] = {
+        user_pending_tasks[user_id][conversation_id] = {
             "status": "completed",
             "completed_at": datetime.now().isoformat(),
         }
@@ -137,13 +154,13 @@ async def process_chat_message(conversation_id: str, message: str):
         logger.exception(f"Error processing message for {conversation_id}")
         
         # Store error response
-        conversations[conversation_id].append({
+        user_conversations[user_id][conversation_id].append({
             "role": "error",
             "content": f"Processing failed: {str(e)}",
             "timestamp": datetime.now().isoformat(),
         })
         
-        pending_tasks[conversation_id] = {
+        user_pending_tasks[user_id][conversation_id] = {
             "status": "error",
             "error": str(e),
             "completed_at": datetime.now().isoformat(),
@@ -151,17 +168,23 @@ async def process_chat_message(conversation_id: str, message: str):
 
 
 @router.get("/{conversation_id}", response_model=ConversationHistory)
-async def get_conversation(conversation_id: str):
+async def get_conversation(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+):
     """
     Get conversation history and current status.
     
     Poll this endpoint after sending a message to get the result.
+    Only returns conversations owned by the authenticated user.
     """
-    if conversation_id not in conversations:
+    user_id = str(user.id)
+    
+    if user_id not in user_conversations or conversation_id not in user_conversations[user_id]:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
     messages = []
-    for msg in conversations[conversation_id]:
+    for msg in user_conversations[user_id][conversation_id]:
         messages.append(HistoryMessage(
             role=msg["role"],
             content=msg["content"],
@@ -170,7 +193,7 @@ async def get_conversation(conversation_id: str):
         ))
     
     # Get created_at from first message
-    created_at = datetime.fromisoformat(conversations[conversation_id][0]["timestamp"])
+    created_at = datetime.fromisoformat(user_conversations[user_id][conversation_id][0]["timestamp"])
     
     return ConversationHistory(
         conversation_id=conversation_id,
@@ -180,7 +203,10 @@ async def get_conversation(conversation_id: str):
 
 
 @router.get("/{conversation_id}/status")
-async def get_conversation_status(conversation_id: str):
+async def get_conversation_status(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+):
     """
     Get the processing status of a conversation.
     
@@ -188,11 +214,15 @@ async def get_conversation_status(conversation_id: str):
         - processing: Message is being processed by agents
         - completed: Processing finished successfully
         - error: Processing failed
+    
+    Only returns status for conversations owned by the authenticated user.
     """
-    if conversation_id not in conversations:
+    user_id = str(user.id)
+    
+    if user_id not in user_conversations or conversation_id not in user_conversations[user_id]:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    status = pending_tasks.get(conversation_id, {"status": "idle"})
+    status = user_pending_tasks.get(user_id, {}).get(conversation_id, {"status": "idle"})
     
     return {
         "conversation_id": conversation_id,
@@ -204,12 +234,17 @@ async def get_conversation_status(conversation_id: str):
 
 
 @router.get("/", response_model=List[ConversationInfo])
-async def list_conversations():
+async def list_conversations(user: User = Depends(get_current_user)):
     """
-    List all conversations.
+    List all conversations for the authenticated user.
     """
+    user_id = str(user.id)
     result = []
-    for conv_id, messages in conversations.items():
+    
+    if user_id not in user_conversations:
+        return result
+    
+    for conv_id, messages in user_conversations[user_id].items():
         if not messages:
             continue
             
@@ -225,26 +260,41 @@ async def list_conversations():
 
 
 @router.delete("/{conversation_id}")
-async def delete_conversation(conversation_id: str):
+async def delete_conversation(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+):
     """
-    Delete a conversation.
+    Delete a conversation owned by the authenticated user.
     """
-    if conversation_id not in conversations:
+    user_id = str(user.id)
+    
+    if user_id not in user_conversations or conversation_id not in user_conversations[user_id]:
         raise HTTPException(status_code=404, detail="Conversation not found")
     
-    del conversations[conversation_id]
-    pending_tasks.pop(conversation_id, None)
+    del user_conversations[user_id][conversation_id]
+    if user_id in user_pending_tasks:
+        user_pending_tasks[user_id].pop(conversation_id, None)
     
     return {"status": "deleted", "conversation_id": conversation_id}
 
 
 @router.post("/new", response_model=ConversationInfo)
-async def create_conversation(request: ConversationCreate):
+async def create_conversation(
+    request: ConversationCreate,
+    user: User = Depends(get_current_user),
+):
     """
-    Create a new empty conversation.
+    Create a new empty conversation for the authenticated user.
     """
+    user_id = str(user.id)
     conversation_id = str(uuid.uuid4())
-    conversations[conversation_id] = []
+    
+    # Initialize user's conversation storage if new
+    if user_id not in user_conversations:
+        user_conversations[user_id] = {}
+    
+    user_conversations[user_id][conversation_id] = []
     
     return ConversationInfo(
         conversation_id=conversation_id,

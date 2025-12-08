@@ -1,4 +1,5 @@
 import type { ServerEvent, ClientMessage } from '@/types/websocket';
+import { useAuthStore } from '@/stores/authStore';
 
 export type WebSocketStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -53,12 +54,24 @@ export class WebSocketService {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
-  private url: string;
+  private baseUrl: string;
   private currentStatus: WebSocketStatus = 'disconnected';
   
   constructor(url?: string) {
-    this.url = url || getWebSocketUrl();
-    console.log('[WS] WebSocket URL:', this.url);
+    this.baseUrl = url || getWebSocketUrl();
+    console.log('[WS] Base WebSocket URL:', this.baseUrl);
+  }
+  
+  /**
+   * Get current URL with fresh auth token
+   */
+  private getCurrentUrl(): string {
+    const token = useAuthStore.getState().token;
+    if (token) {
+      const separator = this.baseUrl.includes('?') ? '&' : '?';
+      return `${this.baseUrl}${separator}token=${encodeURIComponent(token)}`;
+    }
+    return this.baseUrl;
   }
   
   setHandlers(handlers: WebSocketHandlers) {
@@ -87,15 +100,24 @@ export class WebSocketService {
       this.ws.close();
     }
     
+    // Check if user is authenticated
+    const token = useAuthStore.getState().token;
+    if (!token) {
+      console.log('[WS] No auth token, cannot connect');
+      this.updateStatus('error');
+      return;
+    }
+    
     // Reset reconnect attempts on new connection attempt
     this.reconnectAttempts = 0;
     
     this.updateStatus('connecting');
-    console.log('%c[WS] Attempting connection...', 'color: blue; font-weight: bold');
-    console.log('[WS] URL:', this.url);
+    const wsUrl = this.getCurrentUrl();
+    console.log('%c[WS] Attempting authenticated connection...', 'color: blue; font-weight: bold');
+    console.log('[WS] URL (token hidden):', this.baseUrl);
     
     try {
-      this.ws = new WebSocket(this.url);
+      this.ws = new WebSocket(wsUrl);
       console.log('[WS] WebSocket object created');
     } catch (e) {
       console.error('[WS] Failed to create WebSocket:', e);

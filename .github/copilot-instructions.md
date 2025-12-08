@@ -52,14 +52,51 @@ Console Mode (src/main.py)     Web Mode (backend/ + frontend/)
 
 ## Migration Status
 
-**Phases 0-5 COMPLETE** ✅ (web migration finished)
+**Phases 0-5 COMPLETE** ✅ (web migration finished)  
+**Phase 6 IN PROGRESS** 🔄 (multi-user account system)
 
 Track artifacts in:
 - `docs/migration/PROGRESS.md` – Current status and session logs
 - `docs/migration/CHECKLIST.md` – Active checklist
+- `docs/migration/PHASE_6_MULTIUSER.md` – **Current phase: Multi-User System**
 - `docs/migration/archive/PHASE_*.md` – Archived phase guides + quick starts
 
 Canonical setup + onboarding now lives in `README.md`.
+
+### Phase 6: Multi-User Account System (In Progress)
+
+**Goal:** Enable multiple users with their own accounts and secrets.
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Frontend: Login/Register → authStore.ts → Authorization   │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ Bearer Token
+┌───────────────────────────▼─────────────────────────────────┐
+│  Backend:                                                    │
+│    /api/v1/auth/*  → JWT Token (python-jose + bcrypt)       │
+│    get_current_user() → Dependency for all protected routes │
+│    SecretsVault → user_{id}_{key} namespace                 │
+│    SQLite → /app/data/app.db (Users, Conversations)         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Files (Phase 6):**
+| Purpose | File |
+|---------|------|
+| Database engine | `backend/app/core/database.py` |
+| User/Conversation models | `backend/app/models/database.py` |
+| User repository | `backend/app/core/repositories.py` |
+| JWT auth | `backend/app/core/auth.py` |
+| Auth endpoints | `backend/app/api/routes/auth.py` |
+| Frontend auth store | `frontend/src/stores/authStore.ts` |
+| Auth service | `frontend/src/services/authService.ts` |
+
+**New Environment Variables:**
+- `ADMIN_EMAIL` - Email for auto-created admin user at startup
+- `JWT_SECRET_KEY` - Secret for JWT signing (auto-generated if not set)
+- `JWT_EXPIRE_MINUTES` - Token expiration (default: 60)
 
 ### Verified Working (2025-12-01):
 - ✅ Backend API on port 8500
@@ -176,6 +213,36 @@ All go to `outputs/` - use `Path(config.output_dir)`, not hardcoded paths.
 | Tests | `tests/test_crypto_tools.py` |
 | API spec | `docs/api/openapi.yaml` |
 | Migration status | `docs/migration/PROGRESS.md` |
+| **Phase 6 plan** | `docs/migration/PHASE_6_MULTIUSER.md` |
+
+## Authentication Pattern (Phase 6)
+
+When adding protected routes:
+1. Import `get_current_user` from `backend/app/core/dependencies.py`
+2. Add `user: User = Depends(get_current_user)` to route function
+3. Scope data queries to `user.id`
+
+```python
+from backend.app.core.dependencies import get_current_user
+from backend.app.models.database import User
+
+@router.get("/my-data")
+async def get_my_data(user: User = Depends(get_current_user)):
+    # Data is automatically scoped to authenticated user
+    return await get_data_for_user(user.id)
+```
+
+### User-Scoped Secrets
+
+```python
+from backend.app.core.security import SecretsVault
+
+vault = SecretsVault(data_dir)
+# Save secret for specific user
+vault.save_user_secret(user.id, "bitget_api_key", "secret-value")
+# Get secret for specific user
+key = vault.get_user_secret(user.id, "bitget_api_key")
+```
 
 ## Frontend Architecture
 

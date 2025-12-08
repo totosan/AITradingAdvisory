@@ -4,3 +4,4 @@ export { MessageList } from "./MessageList";
 export { StatusPanel } from "./StatusPanel";
 export { ResultsPanel } from "./ResultsPanel";
 export { ChartPanel } from "./ChartPanel";
+export { LoginPage } from "./LoginPage";

@@ -290,6 +290,171 @@ class SecretsVault:
             return "*" * len(value)
         
         return f"{value[:visible_chars]}****{value[-visible_chars:]}"
+    
+    # =========================================================================
+    # User-Scoped Secrets (Multi-User Support)
+    # =========================================================================
+    
+    def _user_key(self, user_id: str, key: str) -> str:
+        """
+        Generate a namespaced key for user-specific secrets.
+        
+        Format: user_{user_id}_{key}
+        
+        Args:
+            user_id: User's unique identifier
+            key: Secret key name
+            
+        Returns:
+            Namespaced key string
+        """
+        # Sanitize user_id to prevent key injection
+        safe_user_id = user_id.replace("_", "-")
+        return f"user_{safe_user_id}_{key}"
+    
+    def save_user_secret(self, user_id: str, key: str, value: str) -> None:
+        """
+        Save an encrypted secret for a specific user.
+        
+        Args:
+            user_id: User's unique identifier
+            key: Secret identifier (e.g., 'bitget_api_key')
+            value: Secret value (will be encrypted)
+        """
+        namespaced_key = self._user_key(user_id, key)
+        self.save_secret(namespaced_key, value)
+        logger.info(f"Saved user secret: {key} for user {user_id[:8]}...")
+    
+    def save_user_secrets(self, user_id: str, secrets_dict: Dict[str, str]) -> None:
+        """
+        Save multiple secrets for a user at once.
+        
+        Args:
+            user_id: User's unique identifier
+            secrets_dict: Dictionary of key-value pairs
+        """
+        namespaced = {
+            self._user_key(user_id, k): v 
+            for k, v in secrets_dict.items()
+        }
+        self.save_secrets(namespaced)
+        logger.info(f"Saved {len(secrets_dict)} user secrets for user {user_id[:8]}...")
+    
+    def get_user_secret(self, user_id: str, key: str) -> Optional[str]:
+        """
+        Retrieve a decrypted secret for a specific user.
+        
+        Args:
+            user_id: User's unique identifier
+            key: Secret identifier
+            
+        Returns:
+            Decrypted secret value, or None if not found
+        """
+        namespaced_key = self._user_key(user_id, key)
+        return self.get_secret(namespaced_key)
+    
+    def delete_user_secret(self, user_id: str, key: str) -> bool:
+        """
+        Delete a user's secret.
+        
+        Args:
+            user_id: User's unique identifier
+            key: Secret identifier
+            
+        Returns:
+            True if secret was deleted, False if not found
+        """
+        namespaced_key = self._user_key(user_id, key)
+        result = self.delete_secret(namespaced_key)
+        if result:
+            logger.info(f"Deleted user secret: {key} for user {user_id[:8]}...")
+        return result
+    
+    def list_user_secrets(self, user_id: str) -> List[str]:
+        """
+        List all secret keys for a specific user.
+        
+        Args:
+            user_id: User's unique identifier
+            
+        Returns:
+            List of secret identifiers (without the user_ prefix)
+        """
+        prefix = self._user_key(user_id, "")
+        all_keys = self.list_secrets()
+        user_keys = [
+            k[len(prefix):] for k in all_keys 
+            if k.startswith(prefix)
+        ]
+        return user_keys
+    
+    def has_user_secret(self, user_id: str, key: str) -> bool:
+        """Check if a user has a specific secret."""
+        namespaced_key = self._user_key(user_id, key)
+        return self.has_secret(namespaced_key)
+    
+    def get_masked_user_secret(
+        self, 
+        user_id: str, 
+        key: str, 
+        visible_chars: int = 4
+    ) -> Optional[str]:
+        """
+        Get a masked version of a user's secret for display.
+        
+        Args:
+            user_id: User's unique identifier
+            key: Secret identifier
+            visible_chars: Number of characters to show at start/end
+            
+        Returns:
+            Masked secret or None if not found
+        """
+        namespaced_key = self._user_key(user_id, key)
+        return self.get_masked_secret(namespaced_key, visible_chars)
+    
+    def delete_all_user_secrets(self, user_id: str) -> int:
+        """
+        Delete all secrets for a specific user.
+        
+        Useful when deleting a user account.
+        
+        Args:
+            user_id: User's unique identifier
+            
+        Returns:
+            Number of secrets deleted
+        """
+        user_keys = self.list_user_secrets(user_id)
+        count = 0
+        for key in user_keys:
+            if self.delete_user_secret(user_id, key):
+                count += 1
+        logger.info(f"Deleted {count} secrets for user {user_id[:8]}...")
+        return count
+    
+    def get_user_status(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get vault status for a specific user.
+        
+        Args:
+            user_id: User's unique identifier
+            
+        Returns:
+            Status dictionary with secret configuration info
+        """
+        return {
+            "secret_count": len(self.list_user_secrets(user_id)),
+            "secrets_configured": {
+                "bitget": all([
+                    self.has_user_secret(user_id, "bitget_api_key"),
+                    self.has_user_secret(user_id, "bitget_api_secret"),
+                    self.has_user_secret(user_id, "bitget_passphrase"),
+                ]),
+                "azure_openai": self.has_user_secret(user_id, "azure_openai_api_key"),
+            }
+        }
 
 
 # ============================================================================

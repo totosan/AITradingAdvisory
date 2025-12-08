@@ -49,6 +49,11 @@ services:
       - BITGET_API_SECRET=${BITGET_API_SECRET:-}
       - BITGET_PASSPHRASE=${BITGET_PASSPHRASE:-}
       
+      # Authentication (Phase 6)
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-60}
+      
       # Development settings
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=DEBUG

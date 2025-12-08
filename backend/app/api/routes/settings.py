@@ -6,6 +6,7 @@ Provides API for managing:
 - LLM configuration (Azure OpenAI / Ollama)
 
 All secrets are encrypted at rest using Fernet (AES-256).
+Secrets are user-scoped - each user has their own isolated secrets.
 """
 from typing import Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,16 +14,19 @@ from pydantic import BaseModel, Field
 
 from app.core.security import SecretsVault, get_vault
 from app.core.config import get_settings
+from app.core.dependencies import get_current_user
+from app.models.database import User
 
 # Import exchange tools reset function
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 try:
-    from exchange_tools import reset_exchange_manager, set_vault
+    from exchange_tools import reset_exchange_manager, set_vault, reset_user_exchange_manager
 except ImportError:
     reset_exchange_manager = None
     set_vault = None
+    reset_user_exchange_manager = None
 
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -160,31 +164,48 @@ class OperationResult(BaseModel):
 async def save_exchange_credentials(
     credentials: ExchangeCredentials,
     vault: SecretsVault = Depends(get_vault),
+    user: User = Depends(get_current_user),
 ):
     """
-    Save encrypted exchange (Bitget) credentials.
+    Save encrypted exchange (Bitget) credentials for the authenticated user.
     
     Credentials are encrypted with AES-256 and stored securely.
     They are never logged or exposed in errors.
+    Secrets are user-scoped - each user has their own credentials.
     """
+    user_id = str(user.id)
     try:
-        # Save all credentials
-        vault.save_secrets({
+        # Save all credentials with user scope
+        vault.save_user_secrets(user_id, {
             "bitget_api_key": credentials.api_key,
             "bitget_api_secret": credentials.api_secret,
             "bitget_passphrase": credentials.passphrase,
         })
         
-        # Reset exchange manager to reload with new credentials
-        if reset_exchange_manager is not None:
-            reset_exchange_manager()
+        # Reset this user's exchange manager to reload with new credentials
+        if reset_user_exchange_manager is not None:
+            reset_user_exchange_manager(user_id)
         
-        # Optionally validate credentials work
+        # Validate credentials work
         validation_result = await _validate_bitget_credentials(credentials)
         
+        # Determine status based on validation:
+        # - "success": credentials verified working (authenticated=True)
+        # - "warning": format valid but auth failed or couldn't verify
+        # - "error": format invalid
+        if not validation_result["valid"]:
+            result_status = "error"
+            result_message = f"Credentials saved but validation failed: {validation_result.get('message', 'Unknown error')}"
+        elif validation_result.get("authenticated") is True:
+            result_status = "success"
+            result_message = "Credentials saved and verified working"
+        else:
+            result_status = "warning"
+            result_message = f"Credentials saved but could not verify: {validation_result.get('message', 'Authentication not confirmed')}"
+        
         return OperationResult(
-            status="success" if validation_result["valid"] else "warning",
-            message="Credentials saved and exchange manager reloaded",
+            status=result_status,
+            message=result_message,
             validation=validation_result,
         )
     
@@ -196,35 +217,43 @@ async def save_exchange_credentials(
 
 
 @router.get("/exchange", response_model=ExchangeStatus)
-async def get_exchange_status(vault: SecretsVault = Depends(get_vault)):
+async def get_exchange_status(
+    vault: SecretsVault = Depends(get_vault),
+    user: User = Depends(get_current_user),
+):
     """
-    Get exchange configuration status (not the actual credentials).
+    Get exchange configuration status for the authenticated user (not the actual credentials).
     """
+    user_id = str(user.id)
     configured = all([
-        vault.has_secret("bitget_api_key"),
-        vault.has_secret("bitget_api_secret"),
-        vault.has_secret("bitget_passphrase"),
+        vault.has_user_secret(user_id, "bitget_api_key"),
+        vault.has_user_secret(user_id, "bitget_api_secret"),
+        vault.has_user_secret(user_id, "bitget_passphrase"),
     ])
     
     return ExchangeStatus(
         configured=configured,
         provider="bitget",
-        api_key_masked=vault.get_masked_secret("bitget_api_key") if configured else None,
+        api_key_masked=vault.get_masked_user_secret(user_id, "bitget_api_key") if configured else None,
     )
 
 
 @router.delete("/exchange", response_model=OperationResult)
-async def delete_exchange_credentials(vault: SecretsVault = Depends(get_vault)):
+async def delete_exchange_credentials(
+    vault: SecretsVault = Depends(get_vault),
+    user: User = Depends(get_current_user),
+):
     """
-    Delete stored exchange credentials.
+    Delete stored exchange credentials for the authenticated user.
     """
-    vault.delete_secret("bitget_api_key")
-    vault.delete_secret("bitget_api_secret")
-    vault.delete_secret("bitget_passphrase")
+    user_id = str(user.id)
+    vault.delete_user_secret(user_id, "bitget_api_key")
+    vault.delete_user_secret(user_id, "bitget_api_secret")
+    vault.delete_user_secret(user_id, "bitget_passphrase")
     
-    # Reset exchange manager to use env vars or no auth
-    if reset_exchange_manager is not None:
-        reset_exchange_manager()
+    # Reset this user's exchange manager to use env vars or no auth
+    if reset_user_exchange_manager is not None:
+        reset_user_exchange_manager(user_id)
     
     return OperationResult(
         status="success",
@@ -233,7 +262,11 @@ async def delete_exchange_credentials(vault: SecretsVault = Depends(get_vault)):
 
 
 async def _validate_bitget_credentials(credentials: ExchangeCredentials) -> dict:
-    """Validate Bitget credentials by checking format."""
+    """
+    Validate Bitget credentials by:
+    1. Checking format (length requirements)
+    2. Actually testing the credentials against Bitget API
+    """
     try:
         # Basic validation - check format
         if len(credentials.api_key) < 10:
@@ -243,16 +276,63 @@ async def _validate_bitget_credentials(credentials: ExchangeCredentials) -> dict
         if len(credentials.passphrase) < 4:
             return {"valid": False, "message": "Passphrase too short"}
         
-        # TODO: Add actual API validation call when needed
-        return {
-            "valid": True,
-            "message": "Credentials format valid",
-        }
+        # Real API validation - try to access account endpoint
+        try:
+            from exchange_providers.bitget_provider import BitgetProvider
+            
+            # Create provider with the credentials to test
+            test_provider = BitgetProvider(
+                api_key=credentials.api_key,
+                api_secret=credentials.api_secret,
+                passphrase=credentials.passphrase,
+                timeout=10,
+            )
+            
+            # Try to get account balance - this requires valid auth
+            balances = test_provider.get_account_balance()
+            
+            # If we get here, credentials are valid
+            return {
+                "valid": True,
+                "message": f"Credentials verified. Found {len(balances)} asset(s) in account.",
+                "authenticated": True,
+            }
+            
+        except Exception as api_error:
+            error_msg = str(api_error).lower()
+            
+            # Check for specific auth errors
+            if "signature" in error_msg or "invalid" in error_msg or "401" in error_msg:
+                return {
+                    "valid": False,
+                    "message": "Invalid credentials: API rejected authentication",
+                    "authenticated": False,
+                }
+            elif "permission" in error_msg or "forbidden" in error_msg or "403" in error_msg:
+                return {
+                    "valid": False,
+                    "message": "Credentials valid but API key lacks required permissions",
+                    "authenticated": False,
+                }
+            elif "rate" in error_msg or "limit" in error_msg or "429" in error_msg:
+                # Rate limited but credentials might be valid
+                return {
+                    "valid": True,
+                    "message": "Format valid (rate limited, could not fully verify)",
+                    "authenticated": None,
+                }
+            else:
+                # Unknown error - credentials format is OK but couldn't verify
+                return {
+                    "valid": True,
+                    "message": f"Format valid (verification failed: {str(api_error)[:100]})",
+                    "authenticated": None,
+                }
     
     except Exception as e:
         return {
             "valid": False,
-            "message": f"Validation failed: {type(e).__name__}",
+            "message": f"Validation failed: {type(e).__name__}: {str(e)[:100]}",
         }
 
 
@@ -264,12 +344,15 @@ async def _validate_bitget_credentials(credentials: ExchangeCredentials) -> dict
 async def save_llm_config(
     config: LLMConfig,
     vault: SecretsVault = Depends(get_vault),
+    user: User = Depends(get_current_user),
 ):
     """
-    Save LLM provider configuration.
+    Save LLM provider configuration for the authenticated user.
     
     If api_version is not provided, it will be auto-detected based on the model.
+    Secrets are user-scoped.
     """
+    user_id = str(user.id)
     try:
         secrets_to_save = {
             "llm_provider": config.provider,
@@ -301,7 +384,7 @@ async def save_llm_config(
             secrets_to_save["azure_openai_api_version_auto"] = "true"
             api_version_message = f" (API version auto-detected: {auto_version})"
         
-        vault.save_secrets(secrets_to_save)
+        vault.save_user_secrets(user_id, secrets_to_save)
         
         # Reset model client in agent service to use new credentials
         # This is done by resetting the global agent service instance
@@ -324,20 +407,24 @@ async def save_llm_config(
 
 
 @router.get("/llm", response_model=LLMStatus)
-async def get_llm_status(vault: SecretsVault = Depends(get_vault)):
-    """Get LLM configuration status."""
+async def get_llm_status(
+    vault: SecretsVault = Depends(get_vault),
+    user: User = Depends(get_current_user),
+):
+    """Get LLM configuration status for the authenticated user."""
+    user_id = str(user.id)
     settings = get_settings()
     
-    # Check vault first, then fall back to env config
-    provider = vault.get_secret("llm_provider") or settings.llm_provider
-    model = vault.get_secret("llm_model")
-    api_version = vault.get_secret("azure_openai_api_version")
-    api_version_auto = vault.get_secret("azure_openai_api_version_auto") == "true"
+    # Check user's vault first, then fall back to env config
+    provider = vault.get_user_secret(user_id, "llm_provider") or settings.llm_provider
+    model = vault.get_user_secret(user_id, "llm_model")
+    api_version = vault.get_user_secret(user_id, "azure_openai_api_version")
+    api_version_auto = vault.get_user_secret(user_id, "azure_openai_api_version_auto") == "true"
     
     if provider == "azure":
         model = model or settings.azure_openai_deployment
-        azure_configured = vault.has_secret("azure_openai_api_key") or bool(settings.azure_openai_api_key)
-        endpoint = vault.get_secret("azure_openai_endpoint") or settings.azure_openai_endpoint
+        azure_configured = vault.has_user_secret(user_id, "azure_openai_api_key") or bool(settings.azure_openai_api_key)
+        endpoint = vault.get_user_secret(user_id, "azure_openai_endpoint") or settings.azure_openai_endpoint
         endpoint_masked = f"{endpoint[:30]}..." if endpoint and len(endpoint) > 30 else endpoint
         
         # If no API version stored, auto-detect based on model
@@ -362,17 +449,21 @@ async def get_llm_status(vault: SecretsVault = Depends(get_vault)):
 
 
 @router.delete("/llm", response_model=OperationResult)
-async def delete_llm_config(vault: SecretsVault = Depends(get_vault)):
+async def delete_llm_config(
+    vault: SecretsVault = Depends(get_vault),
+    user: User = Depends(get_current_user),
+):
     """
-    Delete stored LLM configuration (reverts to .env settings).
+    Delete stored LLM configuration for the authenticated user (reverts to .env settings).
     """
-    vault.delete_secret("llm_provider")
-    vault.delete_secret("llm_model")
-    vault.delete_secret("llm_base_url")
-    vault.delete_secret("azure_openai_api_key")
-    vault.delete_secret("azure_openai_endpoint")
-    vault.delete_secret("azure_openai_deployment")
-    vault.delete_secret("azure_openai_api_version")
+    user_id = str(user.id)
+    vault.delete_user_secret(user_id, "llm_provider")
+    vault.delete_user_secret(user_id, "llm_model")
+    vault.delete_user_secret(user_id, "llm_base_url")
+    vault.delete_user_secret(user_id, "azure_openai_api_key")
+    vault.delete_user_secret(user_id, "azure_openai_endpoint")
+    vault.delete_user_secret(user_id, "azure_openai_deployment")
+    vault.delete_user_secret(user_id, "azure_openai_api_version")
     
     return OperationResult(
         status="success",
@@ -385,27 +476,31 @@ async def delete_llm_config(vault: SecretsVault = Depends(get_vault)):
 # ============================================================================
 
 @router.get("/status", response_model=SettingsStatus)
-async def get_all_settings_status(vault: SecretsVault = Depends(get_vault)):
-    """Get status of all settings."""
+async def get_all_settings_status(
+    vault: SecretsVault = Depends(get_vault),
+    user: User = Depends(get_current_user),
+):
+    """Get status of all settings for the authenticated user."""
+    user_id = str(user.id)
     settings = get_settings()
     
-    # Exchange status
+    # Exchange status (user-scoped)
     exchange_configured = all([
-        vault.has_secret("bitget_api_key"),
-        vault.has_secret("bitget_api_secret"),
-        vault.has_secret("bitget_passphrase"),
+        vault.has_user_secret(user_id, "bitget_api_key"),
+        vault.has_user_secret(user_id, "bitget_api_secret"),
+        vault.has_user_secret(user_id, "bitget_passphrase"),
     ])
     
-    # LLM status
-    provider = vault.get_secret("llm_provider") or settings.llm_provider
-    model = vault.get_secret("llm_model")
-    api_version = vault.get_secret("azure_openai_api_version") or settings.azure_openai_api_version
-    endpoint = vault.get_secret("azure_openai_endpoint") or settings.azure_openai_endpoint
+    # LLM status (user-scoped)
+    provider = vault.get_user_secret(user_id, "llm_provider") or settings.llm_provider
+    model = vault.get_user_secret(user_id, "llm_model")
+    api_version = vault.get_user_secret(user_id, "azure_openai_api_version") or settings.azure_openai_api_version
+    endpoint = vault.get_user_secret(user_id, "azure_openai_endpoint") or settings.azure_openai_endpoint
     endpoint_masked = f"{endpoint[:30]}..." if endpoint and len(endpoint) > 30 else endpoint
     
     if provider == "azure":
         model = model or settings.azure_openai_deployment
-        azure_configured = vault.has_secret("azure_openai_api_key") or bool(settings.azure_openai_api_key)
+        azure_configured = vault.has_user_secret(user_id, "azure_openai_api_key") or bool(settings.azure_openai_api_key)
     else:
         model = model or settings.ollama_model
         azure_configured = None
@@ -416,7 +511,7 @@ async def get_all_settings_status(vault: SecretsVault = Depends(get_vault)):
         exchange=ExchangeStatus(
             configured=exchange_configured,
             provider="bitget",
-            api_key_masked=vault.get_masked_secret("bitget_api_key") if exchange_configured else None,
+            api_key_masked=vault.get_masked_user_secret(user_id, "bitget_api_key") if exchange_configured else None,
         ),
         llm=LLMStatus(
             provider=provider,
@@ -430,11 +525,15 @@ async def get_all_settings_status(vault: SecretsVault = Depends(get_vault)):
 
 
 @router.post("/vault/rotate-key", response_model=OperationResult)
-async def rotate_vault_key(vault: SecretsVault = Depends(get_vault)):
+async def rotate_vault_key(
+    vault: SecretsVault = Depends(get_vault),
+    user: User = Depends(get_current_user),
+):
     """
     Rotate the encryption key.
     
     This re-encrypts all secrets with a new key. Should be done periodically.
+    Note: This affects all users' secrets as they share the same encryption key.
     """
     try:
         vault.rotate_key()

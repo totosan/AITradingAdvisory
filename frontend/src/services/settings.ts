@@ -1,7 +1,6 @@
 /**
  * Settings API service
  */
-import axios from 'axios';
 import type {
   ExchangeCredentials,
   ExchangeConfigStatus,
@@ -10,15 +9,7 @@ import type {
   SettingsStatus,
   OperationResult,
 } from '@/types/settings';
-
-// Create axios instance with base URL
-const api = axios.create({
-  baseURL: '/api/v1/settings',
-  timeout: 15000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+import { api } from './api';
 
 export const settingsClient = {
   // ========================================================================
@@ -29,7 +20,7 @@ export const settingsClient = {
    * Get exchange configuration status
    */
   async getExchangeStatus(): Promise<ExchangeConfigStatus> {
-    const { data } = await api.get<ExchangeConfigStatus>('/exchange');
+    const { data } = await api.get<ExchangeConfigStatus>('/settings/exchange');
     return data;
   },
   
@@ -37,7 +28,7 @@ export const settingsClient = {
    * Save exchange credentials (encrypted)
    */
   async saveExchangeCredentials(credentials: ExchangeCredentials): Promise<OperationResult> {
-    const { data } = await api.post<OperationResult>('/exchange', credentials);
+    const { data } = await api.post<OperationResult>('/settings/exchange', credentials);
     return data;
   },
   
@@ -45,7 +36,7 @@ export const settingsClient = {
    * Delete exchange credentials
    */
   async deleteExchangeCredentials(): Promise<OperationResult> {
-    const { data } = await api.delete<OperationResult>('/exchange');
+    const { data } = await api.delete<OperationResult>('/settings/exchange');
     return data;
   },
   
@@ -57,7 +48,7 @@ export const settingsClient = {
    * Get LLM configuration status
    */
   async getLLMStatus(): Promise<LLMStatus> {
-    const { data } = await api.get<LLMStatus>('/llm');
+    const { data } = await api.get<LLMStatus>('/settings/llm');
     return data;
   },
   
@@ -65,7 +56,7 @@ export const settingsClient = {
    * Save LLM configuration
    */
   async saveLLMConfig(config: LLMConfig): Promise<OperationResult> {
-    const { data } = await api.post<OperationResult>('/llm', config);
+    const { data } = await api.post<OperationResult>('/settings/llm', config);
     return data;
   },
   
@@ -73,7 +64,7 @@ export const settingsClient = {
    * Delete LLM configuration
    */
   async deleteLLMConfig(): Promise<OperationResult> {
-    const { data } = await api.delete<OperationResult>('/llm');
+    const { data } = await api.delete<OperationResult>('/settings/llm');
     return data;
   },
   
@@ -85,7 +76,7 @@ export const settingsClient = {
    * Get overall settings status
    */
   async getStatus(): Promise<SettingsStatus> {
-    const { data } = await api.get<SettingsStatus>('/status');
+    const { data } = await api.get<SettingsStatus>('/settings/status');
     return data;
   },
   
@@ -93,7 +84,7 @@ export const settingsClient = {
    * Rotate encryption key (admin operation)
    */
   async rotateVaultKey(): Promise<OperationResult> {
-    const { data } = await api.post<OperationResult>('/vault/rotate-key');
+    const { data } = await api.post<OperationResult>('/settings/vault/rotate-key');
     return data;
   },
 };

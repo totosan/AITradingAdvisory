@@ -1,5 +1,4 @@
-"""
-WebSocket endpoint for real-time agent streaming.
+"""WebSocket endpoint for real-time agent streaming.
 
 Enhanced with:
 - Improved connection management
@@ -7,6 +6,7 @@ Enhanced with:
 - Error recovery
 - Heartbeat/ping support
 - Agent service integration
+- JWT authentication via query parameter
 """
 import asyncio
 import uuid
@@ -15,10 +15,13 @@ from datetime import datetime
 from typing import Dict, Optional, Set
 import logging
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from starlette.websockets import WebSocketState
 
 from app.services.agent_service import AgentService
+from app.core.auth import decode_access_token
+from app.core.database import get_session_factory
+from app.core.repositories import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +139,7 @@ class ConnectionManager:
         logger.info(f"All agent services reset ({len(self.agent_services)} cleared)")
     
     async def cancel_task(self, client_id: str) -> bool:
-        """Cancel a client's running task and signal the agent service."""
+        """Cancel a clients running task and signal the agent service."""
         cancelled = False
         
         # First, signal the agent service to cancel (sets internal flag)
@@ -207,10 +210,54 @@ async def process_chat_message(
         })
 
 
+async def authenticate_websocket(token: Optional[str]) -> Optional[dict]:
+    """
+    Authenticate WebSocket connection using JWT token.
+    
+    Returns user info dict if valid, None otherwise.
+    """
+    if not token:
+        return None
+    
+    try:
+        token_data = decode_access_token(token)
+        if not token_data:
+            return None
+        
+        user_id = token_data.user_id
+        if not user_id:
+            return None
+        
+        # Verify user exists in database
+        session_factory = get_session_factory()
+        async with session_factory() as db:
+            repo = UserRepository(db)
+            user = await repo.get_by_id(user_id)
+            if not user or not user.is_active:
+                return None
+            
+            return {
+                "id": str(user.id),
+                "email": user.email,
+                "is_admin": user.is_admin,
+            }
+    except Exception as e:
+        logger.warning(f"WebSocket auth failed: {e}")
+        return None
+
+
 @router.websocket("/ws/stream")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    token: Optional[str] = Query(default=None, description="JWT access token for authentication")
+):
     """
     Main WebSocket endpoint for agent streaming.
+    
+    Authentication:
+    - Pass JWT token as query parameter: /ws/stream?token=<jwt_token>
+    - Token is validated on connection
+    - Unauthenticated connections are rejected
     
     Protocol:
     - Client sends: {"type": "chat", "payload": {"message": "..."}}
@@ -218,19 +265,27 @@ async def websocket_endpoint(websocket: WebSocket):
     - Client sends: {"type": "ping", "payload": {}}
     - Server sends: AgentStepEvent, ToolCallEvent, ResultEvent, etc.
     """
-    client_id = str(uuid.uuid4())
+    # Authenticate user
+    user = await authenticate_websocket(token)
+    if not user:
+        await websocket.close(code=4001, reason="Authentication required")
+        logger.warning("WebSocket connection rejected: missing or invalid token")
+        return
+    
+    client_id = user["id"]  # Use user ID as client ID for consistency
     conn_manager = get_manager()
     await conn_manager.connect(websocket, client_id)
     
-    # Send connection confirmation
+    # Send connection confirmation with user info
     await conn_manager.send_event(client_id, {
         "type": "status",
         "status": "connected",
-        "message": f"Connected to agent service",
+        "message": f"Connected as {user['email']}",
+        "user": user,
         "timestamp": datetime.now().isoformat(),
     })
     
-    agent_service = AgentService()
+    agent_service = AgentService(user_id=client_id)
     conn_manager.register_agent_service(client_id, agent_service)
     
     try:

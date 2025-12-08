@@ -34,10 +34,14 @@ from exchange_providers import (
 
 logger = logging.getLogger(__name__)
 
-# Global exchange manager instance
+# Global exchange manager instance (for console mode / no auth)
 _exchange_manager: Optional[ExchangeManager] = None
 # Vault instance for credentials (set by backend)
 _vault_instance = None
+# Current user ID (set per request by backend)
+_current_user_id: Optional[str] = None
+# User-specific exchange managers cache
+_user_exchange_managers: dict = {}
 
 
 def set_vault(vault) -> None:
@@ -55,24 +59,106 @@ def set_vault(vault) -> None:
     logger.info("Vault instance set for exchange tools")
 
 
+def set_current_user(user_id: Optional[str]) -> None:
+    """
+    Set the current user ID for user-scoped credential loading.
+    
+    This should be called by the backend before each request
+    to ensure the correct user's credentials are used.
+    
+    Args:
+        user_id: User's unique identifier, or None for global/console mode
+    """
+    global _current_user_id
+    _current_user_id = user_id
+    if user_id:
+        logger.debug(f"Current user set to: {user_id[:8]}...")
+
+
+def get_exchange_manager_for_user(user_id: str) -> ExchangeManager:
+    """
+    Get or create an exchange manager for a specific user.
+    
+    Each user gets their own ExchangeManager with their own credentials.
+    This ensures user isolation for multi-user scenarios.
+    
+    Args:
+        user_id: User's unique identifier
+        
+    Returns:
+        Configured ExchangeManager with user's Bitget credentials
+    """
+    global _user_exchange_managers
+    
+    if user_id not in _user_exchange_managers:
+        manager = ExchangeManager(
+            default_provider=ProviderType.BITGET,
+            fallback_enabled=True,
+            fallback_provider=ProviderType.COINGECKO,
+        )
+        
+        # Register Bitget with user-specific credentials
+        try:
+            if _vault_instance is not None:
+                bitget = BitgetProvider.from_user_vault(_vault_instance, user_id)
+                logger.info(f"Bitget provider created for user {user_id[:8]}... from vault")
+            else:
+                bitget = BitgetProvider.from_env()
+                logger.info("Bitget provider created from environment (no vault)")
+            
+            manager.register_provider(ProviderType.BITGET, bitget)
+            logger.info(f"Bitget registered for user (authenticated: {bitget.is_authenticated})")
+        except Exception as e:
+            logger.warning(f"Could not initialize Bitget for user: {e}")
+        
+        # Register CoinGecko as fallback (shared, no auth needed)
+        manager.register_provider(ProviderType.COINGECKO, CoinGeckoProvider())
+        
+        if ProviderType.BITGET in manager.available_providers:
+            manager.set_default_provider(ProviderType.BITGET)
+        
+        _user_exchange_managers[user_id] = manager
+    
+    return _user_exchange_managers[user_id]
+
+
+def reset_user_exchange_manager(user_id: str) -> None:
+    """
+    Reset a specific user's exchange manager.
+    
+    Call this after a user's credentials are updated in the vault.
+    
+    Args:
+        user_id: User's unique identifier
+    """
+    global _user_exchange_managers
+    if user_id in _user_exchange_managers:
+        del _user_exchange_managers[user_id]
+        logger.info(f"Exchange manager reset for user {user_id[:8]}...")
+
+
 def get_exchange_manager() -> ExchangeManager:
     """
-    Get or create the global exchange manager instance.
+    Get the appropriate exchange manager.
+    
+    If a current user is set (web mode), returns the user-specific manager.
+    Otherwise, returns the global manager (console mode).
     
     The manager is configured with:
     - Bitget as PRIMARY provider (real-time data, order books, futures)
     - CoinGecko as FALLBACK provider (broad coin coverage)
     - Automatic fallback enabled by default
     
-    Credentials are loaded in this priority:
-    1. Vault (UI-saved credentials)
-    2. Environment variables (Docker/dev setup)
-    
     Returns:
         Configured ExchangeManager with Bitget as default
     """
-    global _exchange_manager
+    global _exchange_manager, _current_user_id
     
+    # If we have a current user, use their specific manager
+    if _current_user_id is not None:
+        return get_exchange_manager_for_user(_current_user_id)
+    
+    # Otherwise, use global manager (console mode / no auth)
     if _exchange_manager is None:
         _exchange_manager = ExchangeManager(
             default_provider=ProviderType.BITGET,
@@ -119,8 +205,9 @@ def reset_exchange_manager() -> None:
     Call this after credentials are updated in the vault
     to force reloading with new credentials.
     """
-    global _exchange_manager
+    global _exchange_manager, _user_exchange_managers
     _exchange_manager = None
+    _user_exchange_managers = {}  # Reset all user managers too
     logger.info("Exchange manager reset - will reload on next access")
 
 

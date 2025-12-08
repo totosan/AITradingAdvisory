@@ -76,7 +76,19 @@ class Settings(BaseSettings):
     # Note: Must use absolute paths to avoid CWD issues when running from different directories
     output_dir: str = Field(default="/app/outputs" if Path("/app").exists() else str(_PROJECT_ROOT / "outputs"))
     # Use /app/data in Docker, project data/ dir for local development
+    data_dir: str = Field(default="/app/data" if Path("/app/data").exists() else str(_PROJECT_ROOT / "data"))
+    # Alias for backwards compatibility
     secrets_dir: str = Field(default="/app/data" if Path("/app/data").exists() else str(_PROJECT_ROOT / "data"))
+    
+    # ==========================================================================
+    # Authentication
+    # ==========================================================================
+    # Admin user email (created at startup if not exists)
+    admin_email: Optional[str] = None
+    # JWT secret key (auto-generated if not set)
+    jwt_secret_key: Optional[str] = None
+    # JWT token expiration in minutes
+    jwt_expire_minutes: int = 60
     
     class Config:
         # Look for .env in project root (3 levels up from this file)

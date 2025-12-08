@@ -8,15 +8,37 @@ import type {
   ChartInfo,
   ChartRequest,
 } from '@/types/api';
+import { getAuthToken, useAuthStore } from '@/stores/authStore';
 
 // Create axios instance with base URL
-const api = axios.create({
+export const api = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
 });
+
+// Add auth token to all requests
+api.interceptors.request.use((config) => {
+  const token = getAuthToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Handle 401 errors (logout on token expiry)
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (axios.isAxiosError(error) && error.response?.status === 401) {
+      // Token expired - logout
+      useAuthStore.getState().logout();
+    }
+    return Promise.reject(error);
+  }
+);
 
 // API client
 export const apiClient = {

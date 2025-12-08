@@ -284,8 +284,9 @@ class AgentService:
     them directly without the full multi-agent orchestration.
     """
     
-    def __init__(self):
+    def __init__(self, user_id: Optional[str] = None):
         self.settings = get_settings()
+        self.user_id = user_id  # User ID for user-scoped secrets
         self._model_client = None  # Lazy initialization
         self.conversation_history: List[Dict[str, str]] = []
         self._cancelled = False
@@ -420,6 +421,13 @@ class AgentService:
         """Initialize tools for simple intent execution."""
         if self._tools_initialized:
             return
+        
+        # Set user context for exchange tools BEFORE importing
+        from exchange_tools import set_current_user, set_vault
+        if self.user_id:
+            set_current_user(self.user_id)
+        if self._vault:
+            set_vault(self._vault)
             
         from exchange_tools import get_realtime_price, get_price_comparison
         from crypto_tools import get_crypto_price, get_market_info
@@ -436,7 +444,7 @@ class AgentService:
             self._intent_router.register_tool(name, func)
         
         self._tools_initialized = True
-        logger.info("Intent router tools initialized")
+        logger.info(f"Intent router tools initialized (user: {self.user_id[:8] if self.user_id else 'global'}...)")
     
     async def classify_intent(self, message: str) -> Intent:
         """

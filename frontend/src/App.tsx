@@ -1,4 +1,5 @@
 import { MainLayout } from "@/components/layout";
+import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const queryClient = new QueryClient({
@@ -13,7 +14,9 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <MainLayout />
+      <ProtectedRoute>
+        <MainLayout />
+      </ProtectedRoute>
     </QueryClientProvider>
   );
 }

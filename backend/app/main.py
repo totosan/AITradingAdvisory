@@ -14,11 +14,12 @@ from fastapi.staticfiles import StaticFiles
 # Add src to path for existing modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from app.api.routes import health, chat, charts
+from app.api.routes import health, chat, charts, auth
 from app.api.routes import settings as settings_router
 from app.api.websocket import stream
 from app.core.config import get_settings
 from app.core.security import get_vault
+from app.core.database import init_db, close_db
 
 # Import exchange tools to set vault
 try:
@@ -37,15 +38,26 @@ async def lifespan(app: FastAPI):
     print(f"   Model: {settings.ollama_model if settings.llm_provider == 'ollama' else settings.azure_openai_deployment}")
     print(f"   WebSocket: ws://localhost:8000/ws/stream")
     
+    # Initialize database
+    await init_db()
+    print(f"   Database: Initialized (SQLite)")
+    
     # Initialize vault and set it for exchange tools
     if set_exchange_vault is not None:
         vault = get_vault()
         set_exchange_vault(vault)
         print(f"   Vault: Initialized for credential management")
     
+    # Bootstrap admin user if ADMIN_EMAIL is set
+    admin_email = settings.admin_email
+    if admin_email:
+        from app.core.auth import bootstrap_admin_user
+        await bootstrap_admin_user(admin_email)
+    
     yield
     
     # Shutdown
+    await close_db()
     print("👋 Shutting down AITradingAdvisory API")
 
 
@@ -73,6 +85,7 @@ def create_app() -> FastAPI:
     
     # Include routers
     app.include_router(health.router, prefix="/api/v1", tags=["Health"])
+    app.include_router(auth.router, prefix="/api/v1", tags=["Authentication"])
     
     # WebSocket router for real-time streaming
     app.include_router(stream.router, tags=["WebSocket"])
