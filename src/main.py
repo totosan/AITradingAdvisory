@@ -70,6 +70,15 @@ from indicator_registry import (
     calculate_indicator_for_chart,
     create_indicator_data_for_chart,
 )
+from tool_registry import (
+    save_custom_tool,
+    list_custom_tools,
+    get_custom_tool,
+    execute_custom_tool,
+    delete_custom_tool,
+    search_tools_semantic,
+    ToolRegistry,
+)
 from tradingview_tools import (
     generate_tradingview_chart,
     create_ai_annotated_chart,
@@ -480,6 +489,18 @@ Specialized cryptocurrency analysis with:
                 create_indicator_data_for_chart,
             ]
             
+            # Define general tool registry functions (for any reusable code)
+            # These enable dynamic tool creation with token-optimized discovery
+            # Includes semantic search using text-embedding-3-small
+            tool_registry_funcs = [
+                save_custom_tool,
+                list_custom_tools,
+                get_custom_tool,
+                execute_custom_tool,
+                delete_custom_tool,
+                search_tools_semantic,  # Semantic search using embeddings
+            ]
+            
             # Define TradingView charting tools
             tradingview_tools = [
                 generate_tradingview_chart,
@@ -809,7 +830,7 @@ Specialized cryptocurrency analysis with:
             coder = AssistantAgent(
                 "CryptoAnalysisCoder",
                 model_client=self.model_client,
-                tools=indicator_tools,
+                tools=indicator_tools + tool_registry_funcs,
                 system_message="""You are a Python developer specializing in crypto analysis tools and **quantitative trading systems**.
                 
                 ═══════════════════════════════════════════════════════════════════
@@ -876,19 +897,49 @@ Specialized cryptocurrency analysis with:
                 8. **BACKTEST AND EVALUATE** indicator/strategy performance
                 9. **SAVE INDICATORS** to the registry for reuse across sessions
                 10. **LOAD EXISTING INDICATORS** from the registry when available
+                11. **SAVE REUSABLE TOOLS** to the tool registry for future conversations
                 
                 **INDICATOR REGISTRY - PERSISTENT STORAGE:**
                 You have access to a persistent indicator registry. ALWAYS check for existing
                 indicators before creating new ones, and ALWAYS save new indicators for reuse!
                 
-                📚 **Registry Tools:**
+                📚 **Indicator Registry Tools:**
                 - list_custom_indicators(category, search) - List all saved indicators
                 - get_custom_indicator(indicator_id) - Get full details and code for an indicator
                 - save_custom_indicator(...) - Save a new indicator to the registry
                 - get_indicator_code_for_execution(indicator_id) - Get executable code
                 - delete_custom_indicator(indicator_id, confirm) - Remove an indicator
                 
-                📊 **Chart Display Tools (NEW!):**
+                🛠️ **GENERAL TOOL REGISTRY - ANY REUSABLE CODE:**
+                Beyond indicators, you can save ANY useful code as reusable tools!
+                This uses a token-optimized approach:
+                - Only tool summaries (one-liners) are sent to the LLM initially
+                - Full tool definitions are loaded on-demand when selected
+                
+                📦 **Tool Registry Functions:**
+                - list_custom_tools(category, search) - List saved tools with short summaries
+                - get_custom_tool(tool_id) - Get full definition including code
+                - save_custom_tool(name, code, description, one_liner, input_schema, ...) - Save new tool
+                - execute_custom_tool(tool_id, parameters) - Run a saved tool
+                - delete_custom_tool(tool_id, confirm) - Remove a tool
+                
+                **WHEN TO SAVE CODE AS A TOOL:**
+                - Data fetchers (whale alerts, sentiment scrapers, custom APIs)
+                - Analysis functions (correlation matrices, anomaly detection)
+                - Data transformers (normalization, aggregation)
+                - Utility functions used across multiple analyses
+                
+                **TOOL CATEGORIES:** market_data, derivatives, technical, charting, 
+                reporting, data_transform, external_api, utility, custom
+                
+                🔍 **SEMANTIC TOOL SEARCH (NEW!):**
+                Use search_tools_semantic() to find tools by meaning, not just keywords!
+                It uses text-embedding-3-small to understand your query semantically.
+                
+                Example: search_tools_semantic("track large crypto transactions")
+                → Finds "whale_tracker" even if you didn't use that exact term!
+                
+                📊 **Chart Display Tools:**
                 - calculate_indicator_for_chart(indicator_id, ohlcv_data, params, color) - Calculate saved indicator and format for chart
                 - create_indicator_data_for_chart(name, data, color, line_width, separate_scale) - Create chart data from calculated values
                 
