@@ -2,9 +2,11 @@
 
 Track your progress through the migration phases.
 
-**Quick Status:** Phase 0 ✅ | Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5 ✅
+**Quick Status:** Phase 0 ✅ | Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4 ✅ | Phase 5 ✅ | Phase 6 ✅
 
 > Detailed playbooks for every phase (including quick-start notes) now live in `docs/migration/archive/`. Link format: `./archive/PHASE_X.md`.
+> 
+> **Active Phase:** See [PHASE_6_MULTIUSER.md](./PHASE_6_MULTIUSER.md) for current implementation.
 
 ---
 
@@ -309,6 +311,77 @@ Track your progress through the migration phases.
 
 ---
 
+## Phase 6: Multi-User Account System ✅
+
+> See [PHASE_6_MULTIUSER.md](./PHASE_6_MULTIUSER.md) for detailed plan.
+
+### 6.1 Database Layer ✅
+- [x] Add SQLAlchemy dependencies to requirements.txt
+- [x] Create `backend/app/core/database.py` (async engine)
+- [x] Create `backend/app/models/database.py` (User, Conversation, Message models)
+- [x] Add DB initialization to main.py
+
+### 6.2 User Repository ✅
+- [x] Create `backend/app/core/repositories.py`
+- [x] Implement `UserRepository` with full CRUD
+- [x] Implement `ConversationRepository`
+- [x] Implement `MessageRepository`
+
+### 6.3 JWT Authentication ✅
+- [x] Create `backend/app/core/auth.py`
+- [x] Implement password hashing (bcrypt==4.0.1)
+- [x] Implement JWT token creation/validation (python-jose)
+- [x] Implement admin bootstrap (ADMIN_EMAIL)
+
+### 6.4 Auth API Routes ✅
+- [x] Create `backend/app/api/routes/auth.py`
+- [x] Implement POST /api/v1/auth/register
+- [x] Implement POST /api/v1/auth/login
+- [x] Implement GET /api/v1/auth/me
+- [x] Register router in main.py
+- [x] Test all endpoints (working)
+
+### 6.5 SecretsVault User-Namespace ✅
+- [x] Add `save_user_secret()` method
+- [x] Add `get_user_secret()` method
+- [x] Add `delete_user_secret()` method
+- [x] Add `list_user_secrets()` method
+- [x] Add `get_user_status()` method
+
+### 6.6 Route Protection ✅
+- [x] Add `get_current_user()` dependency
+- [x] Add `get_current_user_optional()` dependency
+- [x] Add `get_current_admin_user()` dependency
+- [x] Protect chat routes with user dependency
+- [x] Protect charts routes with user dependency
+- [x] Protect settings routes with user dependency
+- [x] Scope data to user.id
+
+### 6.7 WebSocket Authentication ✅
+- [x] Add token validation on connect
+- [x] Support ?token= query parameter
+- [x] Store user context in AgentService
+
+### 6.8 Frontend Auth Flow ✅
+- [x] Create `authStore.ts` (Zustand with localStorage persistence)
+- [x] Create `authService.ts`
+- [x] Create LoginPage component (combined login/register)
+- [x] Create ProtectedRoute wrapper
+- [x] Add Authorization header to API client (axios interceptors)
+- [x] Wrap MainLayout with ProtectedRoute in App.tsx
+- [x] Add logout button to Header
+- [x] Install zustand package
+- [x] Frontend builds successfully
+- [x] Add token to WebSocket connection
+
+### 6.9 Environment & Docker ✅
+- [x] Add ADMIN_EMAIL to .env.example
+- [x] Add JWT_SECRET_KEY to .env.example
+- [x] Add JWT_EXPIRE_MINUTES to .env.example
+- [x] Update docker-compose.dev.yml with new env vars
+
+---
+
 ## Final Verification ⏳
 
 ### Functionality
@@ -318,6 +391,7 @@ Track your progress through the migration phases.
 - [ ] Charts display correctly
 - [ ] Settings save and load
 - [x] WebSocket reconnects on disconnect
+- [ ] User login/logout working in browser
 
 ### Performance
 - [ ] WebSocket latency acceptable
@@ -326,13 +400,16 @@ Track your progress through the migration phases.
 
 ### Security
 - [ ] HTTPS working (if applicable)
-- [ ] Secrets encrypted
+- [x] Secrets encrypted (Fernet AES-256)
+- [x] Passwords hashed (bcrypt)
+- [x] JWT tokens used for auth
 - [ ] No sensitive data in logs
 - [ ] CORS configured correctly
 
 ### Documentation
-- [ ] README updated
-- [ ] Environment variables documented
+- [x] README updated
+- [x] Environment variables documented
+- [x] copilot-instructions.md updated
 - [ ] Deployment steps documented
 
 ---

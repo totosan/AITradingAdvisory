@@ -10,14 +10,87 @@
 | Phase 3: Real-time | ✅ Complete | 2025-11-30 | 2025-11-30 | Enhanced WebSocket + Agent streaming |
 | Phase 4: Secrets | ✅ Complete | 2025-12-01 | 2025-12-01 | Vault ✅, Settings API ✅, Frontend ✅ (Integration parked) |
 | Phase 5: Containers | ✅ Complete | 2025-12-01 | 2025-12-01 | Docker ✅, Compose ✅, Azure Bicep ✅, CI/CD ✅ |
+| Phase 6: Multi-User | ✅ Complete | 2025-12-08 | 2025-12-08 | SQLite + JWT Auth + User Secrets + Protected Routes |
+| Phase 7: Learning System | 🔄 In Progress | 2025-12-09 | - | Strategy-aware feedback loop for continuous improvement |
 
 **Archive:** Detailed playbooks for each phase now live in `docs/migration/archive/` to keep this folder focused on current progress + checklist.
+
+**Active Phase:** Phase 7 - Agent Learning & Feedback System
 
 **Legend:** ✅ Complete | 🔄 In Progress | ⏳ Pending | ❌ Blocked
 
 ---
 
+## Phase 7: Learning System (Current)
+
+**Goal:** Strategie-bewusstes Lern- und Feedback-System für kontinuierliche Verbesserung der Trading-Analysen
+
+### Completed Steps (2025-12-09)
+- [x] PHASE_7_LEARNING_SYSTEM.md documentation created
+- [x] Database models extended: `Prediction`, `PredictionEvaluation`, `GlobalInsight`
+- [x] `StrategyType` enum: range, breakout_pullback, trend_following, reversal, scalping
+- [x] IntentRouter extended with `classify_strategy()` for query-based strategy detection
+- [x] `PredictionRepository` with strategy-isolated queries and performance stats
+- [x] `PredictionService` for prediction lifecycle (extract, save, evaluate, score)
+- [x] `FeedbackContextService` for token-efficient context generation (~200 tokens)
+- [x] AgentService integration: strategy classification + feedback injection into TechnicalAnalyst
+- [x] API routes: `/api/v1/predictions/*` for CRUD and feedback
+
+### Remaining Steps
+- [ ] Database migration to create new tables
+- [ ] Evaluation scheduler (background task)
+- [ ] Frontend components: PredictionsList, PerformanceDashboard
+- [ ] Tests for prediction service and strategy classification
+
+---
+
 ## Session Log
+
+### 2025-12-09 - Session 7 (Phase 7 Start)
+
+**Completed:**
+- [x] Designed strategy-aware learning system architecture
+- [x] Extended `backend/app/models/database.py` with:
+  - `StrategyType`, `PredictionStatus`, `PredictionOutcome`, `InsightType` enums
+  - `Prediction` model (entry/SL/TP, strategy_type, outcome, scores)
+  - `PredictionEvaluation` model (MFE/MAE tracking)
+  - `GlobalInsight` model (cross-strategy learnings)
+- [x] Extended `src/intent_router.py` with:
+  - `StrategyType` enum and `STRATEGY_KEYWORDS` mapping
+  - `classify_strategy()` pattern-based method
+  - `classify_strategy_async()` LLM-based method
+- [x] Extended `backend/app/core/repositories.py` with:
+  - `PredictionRepository` (CRUD, filtering, stats aggregation)
+  - `PredictionEvaluationRepository` (snapshots)
+  - `GlobalInsightRepository` (cross-strategy insights)
+- [x] Created `backend/app/services/prediction_service.py`:
+  - `extract_predictions_from_message()` - JSON parsing from agent output
+  - `save_prediction()` - Persist with strategy context
+  - `evaluate_prediction()` - Compare vs market
+  - `_calculate_accuracy_score()` - Scoring logic
+  - `identify_strengths()` / `identify_weaknesses()` - Pattern analysis
+- [x] Created `backend/app/services/feedback_context.py`:
+  - `get_strategy_context()` - ~200 token summaries
+  - `format_feedback_for_prompt()` - Agent-ready formatting
+- [x] Modified `backend/app/services/agent_service.py`:
+  - Added `classify_strategy()` method
+  - Added `_get_feedback_context()` method
+  - Inject feedback into TechnicalAnalyst system prompt
+- [x] Created `backend/app/api/routes/predictions.py`:
+  - GET `/predictions` - List with filters
+  - GET `/predictions/{id}` - Details
+  - POST `/predictions/{id}/feedback` - User rating
+  - GET `/predictions/stats` - Strategy performance
+  - GET `/predictions/insights/global` - Cross-strategy learnings
+- [x] Registered predictions router in `backend/app/main.py`
+
+**Architecture Decisions:**
+1. Strategy isolation via `strategy_type` field - Range trading feedback doesn't affect Breakout metrics
+2. Token efficiency: ~200 token context injection vs full history dump
+3. Query classification reuses IntentRouter pattern (pattern-based + LLM fallback)
+4. Global Insights for cross-strategy patterns (e.g., "SL too tight across all strategies")
+
+---
 
 ### 2025-11-30 - Session 1
 
@@ -575,8 +648,171 @@ Track significant file modifications:
 | 2025-12-01 | `azure/bicep/` | Created | Azure Container Apps infrastructure |
 | 2025-12-01 | `.github/workflows/ci.yml` | Created | CI/CD pipeline |
 | 2025-12-01 | `docs/migration/*.md` | Updated | All phase docs updated with completion status |
+| 2025-12-08 | `docs/migration/PHASE_6_MULTIUSER.md` | Created | Multi-User Account System plan |
 
 ---
+
+## Session Log: 2025-12-08 - Phase 6 Implementation
+
+**Goal:** Implement multi-user account system with SQLite, JWT auth, and per-user secrets.
+
+### Step 1: Documentation ✅
+- [x] Created PHASE_6_MULTIUSER.md with full implementation plan
+- [x] Updated PROGRESS.md with Phase 6 status
+- [x] Updated CHECKLIST.md with Phase 6 tasks
+- [x] Updated copilot-instructions.md with new architecture
+- [x] Updated .env.example with new variables (ADMIN_EMAIL, JWT_SECRET_KEY, JWT_EXPIRE_MINUTES)
+
+### Step 2: SQLite + SQLAlchemy Setup ✅
+- [x] Created `backend/app/core/database.py` - Async SQLAlchemy engine with aiosqlite
+- [x] Created `backend/app/models/database.py` - User, Conversation, Message models
+- [x] Updated `backend/requirements.txt` with sqlalchemy, aiosqlite, python-jose, passlib, bcrypt==4.0.1, email-validator
+
+### Step 3: User Repository Interface ✅
+- [x] Created `backend/app/core/repositories.py` - UserRepository, ConversationRepository, MessageRepository
+- [x] Full CRUD operations with async support
+- [x] Proper relationship handling
+
+### Step 4: JWT-Auth Module ✅
+- [x] Created `backend/app/core/auth.py`
+- [x] Password hashing with bcrypt (pinned 4.0.1 for passlib compatibility)
+- [x] JWT token creation/validation with python-jose
+- [x] Admin bootstrap function for ADMIN_EMAIL
+
+### Step 5: Auth Endpoints ✅
+- [x] Created `backend/app/api/routes/auth.py`
+- [x] POST /api/v1/auth/register - User registration
+- [x] POST /api/v1/auth/login - Login with JWT token response
+- [x] GET /api/v1/auth/me - Get current user info
+- [x] All endpoints tested and working
+
+### Step 6: SecretsVault User Namespace ✅
+- [x] Extended `backend/app/core/security.py`
+- [x] Added save_user_secret(), get_user_secret(), delete_user_secret(), list_user_secrets()
+- [x] User secrets use prefix `user_{id}_{key}` for isolation
+- [x] Added get_user_status() for per-user vault status
+
+### Step 7: Route Protection Dependency ✅
+- [x] Updated `backend/app/core/dependencies.py`
+- [x] Added get_current_user() - Extract user from JWT token
+- [x] Added get_current_user_optional() - For optional auth
+- [x] Added get_current_admin_user() - Admin-only endpoints
+
+### Step 8: WebSocket Auth ✅
+- [x] Add token query parameter to WebSocket connections
+- [x] Created authenticate_websocket() function in stream.py
+- [x] WebSocket rejects connections without valid token (403)
+- [x] AgentService now receives user_id parameter
+- [x] Updated frontend websocket.ts to append token to URL
+- [x] Tested: Unauthenticated → 403, Authenticated → Connected
+
+### Step 9: Frontend Auth Flow ✅
+- [x] Created `frontend/src/stores/authStore.ts` - Zustand store with localStorage persistence
+- [x] Created `frontend/src/services/authService.ts` - Auth API service
+- [x] Created `frontend/src/components/features/LoginPage.tsx` - Login/Register UI
+- [x] Created `frontend/src/components/layout/ProtectedRoute.tsx` - Auth wrapper
+- [x] Updated `frontend/src/services/api.ts` - Axios interceptors for token injection
+- [x] Updated `frontend/src/App.tsx` - Wrapped MainLayout with ProtectedRoute
+- [x] Updated `frontend/src/components/layout/Header.tsx` - Added logout button
+- [x] Installed zustand package
+- [x] Frontend builds successfully
+
+### Step 10: Environment & Docker ✅
+- [x] Updated `docker-compose.dev.yml` with auth environment variables
+- [x] Updated `.env.example` with new variables
+- [x] Backend container rebuilt and running
+
+### Step 11: Protect Existing Routes ✅
+- [x] Updated `backend/app/api/routes/chat.py` - All routes require get_current_user
+- [x] Updated `backend/app/api/routes/charts.py` - All routes require get_current_user  
+- [x] Updated `backend/app/api/routes/settings.py` - All routes require get_current_user
+- [x] Changed from global storage to user-scoped storage (user_conversations, user_chart_registry)
+- [x] Settings now use user-scoped secrets (save_user_secrets, get_user_secret, etc.)
+- [x] Tested: Without auth → 401 "Not authenticated", With auth → Works
+
+### Testing Results
+
+**Backend Auth Endpoints (Tested ✅):**
+```bash
+# Register
+curl -X POST http://localhost:8500/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@test.com","password":"testpass123"}'
+# Response: {"id":1,"email":"test@test.com","is_admin":false,"created_at":"..."}
+
+# Login  
+curl -X POST http://localhost:8500/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@test.com","password":"testpass123"}'
+# Response: {"access_token":"eyJ...","token_type":"bearer"}
+
+# Get Current User
+curl http://localhost:8500/api/v1/auth/me \
+  -H "Authorization: Bearer eyJ..."
+# Response: {"id":1,"email":"test@test.com","is_admin":false,...}
+```
+
+**Frontend Build (Tested ✅):**
+```
+✓ 2082 modules transformed
+dist/assets/index-oVQ7eYgt.css   41.30 kB │ gzip:   7.92 kB
+dist/assets/index-TPOx1u8h.js   503.31 kB │ gzip: 157.62 kB
+✓ built in 2.02s
+```
+
+**Docker (Tested ✅):**
+```
+✔ Container magentic-backend-dev   Running
+✔ Container magentic-frontend-dev  Started
+```
+
+### Architecture Decisions Implemented:
+- SQLite for local dev at `/app/data/app.db` (Azure SQL later)
+- JWT tokens with bcrypt password hashing (bcrypt==4.0.1 for passlib compat)
+- Admin user via ADMIN_EMAIL env variable (auto-created on startup)
+- User-namespaced secrets with prefix `user_{id}_{key}`
+- Repository pattern for easy Azure migration
+- Zustand + localStorage for frontend auth state persistence
+
+### Next Steps:
+- [x] Step 8: WebSocket Auth (add token to WS connections) ✅
+- [ ] Test full frontend auth flow in browser
+- [ ] Test admin user auto-creation with ADMIN_EMAIL
+
+---
+
+### Phase 6 Complete! 🎉
+
+All Phase 6 tasks have been implemented:
+
+1. **SQLite Database** - Async SQLAlchemy with User/Conversation/Message models
+2. **JWT Authentication** - bcrypt password hashing, JWT tokens with python-jose
+3. **User Repository** - Full CRUD with async support
+4. **Auth Endpoints** - Register, Login, /me (all tested)
+5. **User-Scoped Secrets** - SecretsVault with user namespace prefix
+6. **WebSocket Auth** - Token via query param, authenticate_websocket()
+7. **Frontend Auth** - LoginPage, authStore, ProtectedRoute, token injection
+8. **Protected Routes** - Chat, Charts, Settings all require authentication
+9. **User-Scoped Data** - Conversations, charts, settings isolated per user
+
+**Testing Summary:**
+```bash
+# Without auth
+curl http://localhost:8500/api/v1/chat/
+→ {"detail":"Not authenticated"}
+
+# With auth
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8500/api/v1/chat/
+→ []  (empty list - no conversations yet)
+
+# WebSocket without token
+wscat -c ws://localhost:8500/ws/stream
+→ HTTP 403
+
+# WebSocket with token  
+wscat -c "ws://localhost:8500/ws/stream?token=$TOKEN"
+→ Connected
+```
 
 ## Quick Reference
 
@@ -588,6 +824,9 @@ make run
 
 # Run tests
 source .venv/bin/activate && pytest tests/ -v
+
+# Docker dev mode
+docker compose -f docker-compose.dev.yml up --build -d
 
 # Start backend (port 8500 to avoid VS Code conflicts)
 cd backend && ../.venv/bin/python3 -m uvicorn app.main:app --port 8500
@@ -608,11 +847,18 @@ docker-compose up
 | Crypto tools | `src/crypto_tools.py` |
 | Cache layer | `src/cache.py` |
 | Backend config | `backend/app/core/config.py` |
+| Database engine | `backend/app/core/database.py` |
+| Auth module | `backend/app/core/auth.py` |
+| User models | `backend/app/models/database.py` |
+| Repositories | `backend/app/core/repositories.py` |
+| Auth endpoints | `backend/app/api/routes/auth.py` |
+| Frontend auth store | `frontend/src/stores/authStore.ts` |
 | Migration plan | `docs/migration/MIGRATION_PLAN.md` |
 | Progress tracker | `docs/migration/PROGRESS.md` (this file) |
+| Phase 6 plan | `docs/migration/PHASE_6_MULTIUSER.md` |
 | Checklist | `docs/migration/CHECKLIST.md` |
 | API Spec | `docs/api/openapi.yaml` |
 
 ---
 
-*Last updated: 2025-12-01*
+*Last updated: 2025-12-08*

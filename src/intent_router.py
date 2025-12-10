@@ -43,6 +43,67 @@ class IntentType(Enum):
     CONVERSATION = "conversation"         # Follow-up, clarification, general chat
 
 
+class StrategyType(Enum):
+    """
+    Trading strategy types for prediction categorization.
+    
+    Used to isolate feedback loops - e.g., Range trading feedback
+    doesn't affect Breakout-Pullback performance metrics.
+    """
+    RANGE = "range"                      # Range/channel trading
+    BREAKOUT_PULLBACK = "breakout_pullback"  # Breakout with pullback entry
+    TREND_FOLLOWING = "trend_following"  # Trend/momentum trading
+    REVERSAL = "reversal"                # Counter-trend reversals
+    SCALPING = "scalping"                # Short-term scalping
+    UNKNOWN = "unknown"                  # Could not classify
+
+
+# Keywords for strategy classification
+STRATEGY_KEYWORDS: Dict[StrategyType, List[str]] = {
+    StrategyType.RANGE: [
+        "range", "seitwärts", "sideways", "channel", "consolidation",
+        "konsolidierung", "bounce", "support resistance", "s/r",
+        "range-bound", "ranging", "box", "rectangle",
+    ],
+    StrategyType.BREAKOUT_PULLBACK: [
+        "breakout", "ausbruch", "pullback", "retest", "break out",
+        "durchbruch", "rücksetzer", "false breakout", "fakeout",
+        "break and retest", "continuation", "expansion",
+    ],
+    StrategyType.TREND_FOLLOWING: [
+        "trend", "momentum", "ema cross", "ma cross", "moving average",
+        "gleitender durchschnitt", "trend following", "with the trend",
+        "higher high", "lower low", "impulse", "swing",
+    ],
+    StrategyType.REVERSAL: [
+        "reversal", "umkehr", "divergence", "divergenz", "oversold",
+        "overbought", "überkauft", "überverkauft", "bottom", "top",
+        "double top", "double bottom", "head and shoulders",
+        "erschöpfung", "exhaustion", "counter-trend",
+    ],
+    StrategyType.SCALPING: [
+        "scalp", "scalping", "quick", "short-term", "kurzfristig",
+        "5m", "15m", "1m", "fast trade", "schnell", "intraday",
+        "day trade", "daytrade",
+    ],
+}
+
+# Mapping from string to StrategyType for LLM responses
+STRATEGY_TYPE_MAP = {
+    "range": StrategyType.RANGE,
+    "breakout_pullback": StrategyType.BREAKOUT_PULLBACK,
+    "breakout": StrategyType.BREAKOUT_PULLBACK,  # Alias
+    "pullback": StrategyType.BREAKOUT_PULLBACK,  # Alias
+    "trend_following": StrategyType.TREND_FOLLOWING,
+    "trend": StrategyType.TREND_FOLLOWING,  # Alias
+    "momentum": StrategyType.TREND_FOLLOWING,  # Alias
+    "reversal": StrategyType.REVERSAL,
+    "scalping": StrategyType.SCALPING,
+    "scalp": StrategyType.SCALPING,  # Alias
+    "unknown": StrategyType.UNKNOWN,
+}
+
+
 # Mapping from string to IntentType for LLM responses
 INTENT_TYPE_MAP = {
     "simple_lookup": IntentType.SIMPLE_LOOKUP,
@@ -615,6 +676,121 @@ class IntentRouter:
         """Set the model client for LLM classification."""
         self._model_client = client
         self._llm_initialized = True
+    
+    # =========================================================================
+    # Strategy Classification (for Learning System)
+    # =========================================================================
+    
+    def classify_strategy(self, message: str) -> Tuple[StrategyType, float]:
+        """
+        Classify the trading strategy type from user message.
+        
+        Uses pattern-based classification for fast, reliable results.
+        Strategy classification is used to:
+        - Isolate feedback loops (Range feedback doesn't affect Breakout metrics)
+        - Inject relevant performance context into agent prompts
+        - Track strategy-specific accuracy over time
+        
+        Args:
+            message: User's query or analysis request
+            
+        Returns:
+            Tuple of (StrategyType, confidence_score)
+            
+        Examples:
+            >>> router.classify_strategy("Analyze BTC for breakout setup")
+            (StrategyType.BREAKOUT_PULLBACK, 0.85)
+            
+            >>> router.classify_strategy("Is ETH in a good range for swing trading?")
+            (StrategyType.RANGE, 0.75)
+        """
+        message_lower = message.lower()
+        
+        # Score each strategy type by keyword matches
+        scores: Dict[StrategyType, float] = {}
+        
+        for strategy_type, keywords in STRATEGY_KEYWORDS.items():
+            score = 0.0
+            matches = []
+            for keyword in keywords:
+                if keyword in message_lower:
+                    # Longer keywords get higher weight
+                    weight = min(len(keyword) / 10, 1.0) * 0.25
+                    score += 0.25 + weight
+                    matches.append(keyword)
+            
+            if score > 0:
+                scores[strategy_type] = min(score, 1.0)
+                logger.debug(f"Strategy {strategy_type.value}: {score:.2f} (matches: {matches})")
+        
+        if not scores:
+            return (StrategyType.UNKNOWN, 0.0)
+        
+        # Return highest scoring strategy
+        best_strategy = max(scores, key=scores.get)
+        confidence = scores[best_strategy]
+        
+        logger.info(f"Strategy classified: {best_strategy.value} (conf: {confidence:.2f})")
+        return (best_strategy, confidence)
+    
+    async def classify_strategy_async(self, message: str) -> Tuple[StrategyType, float]:
+        """
+        Classify strategy using LLM for better accuracy.
+        
+        Falls back to pattern-based classification if LLM unavailable.
+        
+        Args:
+            message: User's query
+            
+        Returns:
+            Tuple of (StrategyType, confidence_score)
+        """
+        client = self._get_model_client()
+        if client is None:
+            return self.classify_strategy(message)
+        
+        try:
+            from autogen_core.models import UserMessage
+            
+            prompt = '''You are a trading strategy classifier. Classify the user's message into ONE strategy type.
+
+Strategy types:
+- **range**: Range/channel trading, sideways markets, bouncing between support/resistance
+- **breakout_pullback**: Breakout trades, waiting for pullback/retest after breakout
+- **trend_following**: Trading with the trend, momentum, moving average strategies
+- **reversal**: Counter-trend trades, divergences, oversold/overbought reversals
+- **scalping**: Very short-term trades, 1-15 minute timeframes, quick profits
+- **unknown**: Cannot determine strategy from message
+
+Respond ONLY with JSON: {"strategy": "<type>", "confidence": 0.0-1.0, "reason": "brief explanation"}
+
+User message: ''' + message
+            
+            response = await client.create(
+                messages=[UserMessage(content=prompt, source="user")],
+                json_output=True,
+            )
+            
+            content = response.content
+            if isinstance(content, str):
+                json_match = re.search(r'\{[^{}]*\}', content)
+                if json_match:
+                    data = json.loads(json_match.group())
+                else:
+                    data = json.loads(content)
+            else:
+                data = content
+            
+            strategy_str = data.get("strategy", "unknown").lower()
+            strategy_type = STRATEGY_TYPE_MAP.get(strategy_str, StrategyType.UNKNOWN)
+            confidence = float(data.get("confidence", 0.7))
+            
+            logger.info(f"LLM strategy classification: {strategy_type.value} (conf: {confidence:.2f})")
+            return (strategy_type, confidence)
+            
+        except Exception as e:
+            logger.warning(f"LLM strategy classification failed: {e}, using pattern fallback")
+            return self.classify_strategy(message)
 
 
 def format_simple_result(result: Dict[str, Any]) -> str:

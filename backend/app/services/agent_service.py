@@ -47,8 +47,11 @@ from app.models.events import (
     StatusEvent,
 )
 
-# Import intent router
-from intent_router import IntentRouter, IntentType, Intent, format_simple_result
+# Import intent router with strategy classification
+from intent_router import (
+    IntentRouter, IntentType, Intent, format_simple_result,
+    StrategyType, STRATEGY_TYPE_MAP,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +285,10 @@ class AgentService:
     
     Includes intent routing to optimize simple queries by executing
     them directly without the full multi-agent orchestration.
+    
+    Includes Learning System integration:
+    - Strategy classification for feedback isolation
+    - Performance feedback injection into agent prompts
     """
     
     def __init__(self, user_id: Optional[str] = None):
@@ -296,6 +303,10 @@ class AgentService:
         self._intent_router = IntentRouter()
         self._tools: Dict[str, Any] = {}  # Lazy initialization
         self._tools_initialized = False
+        
+        # Current strategy type for feedback context
+        self._current_strategy: Optional[StrategyType] = None
+        self._feedback_context: str = ""
         
         # Vault for dynamic credential loading
         self._vault = None
@@ -463,6 +474,79 @@ class AgentService:
             logger.warning(f"LLM classification failed, using pattern fallback: {e}")
             return self._intent_router.classify(message)
     
+    async def classify_strategy(self, message: str) -> StrategyType:
+        """
+        Classify the trading strategy from a user message.
+        
+        Used by the Learning System to isolate feedback per strategy.
+        
+        Args:
+            message: The user's message
+            
+        Returns:
+            StrategyType enum value
+        """
+        try:
+            strategy_type, confidence = await self._intent_router.classify_strategy_async(message)
+            self._current_strategy = strategy_type
+            logger.info(f"Strategy classified: {strategy_type.value} (conf: {confidence:.2f})")
+            return strategy_type
+        except Exception as e:
+            logger.warning(f"Strategy classification failed: {e}")
+            # Fallback to pattern-based
+            strategy_type, _ = self._intent_router.classify_strategy(message)
+            self._current_strategy = strategy_type
+            return strategy_type
+    
+    async def _get_feedback_context(self, strategy_type: StrategyType) -> str:
+        """
+        Get feedback context for the current strategy.
+        
+        Fetches performance summary from the Learning System to inject
+        into agent prompts.
+        
+        Args:
+            strategy_type: The trading strategy
+            
+        Returns:
+            Formatted feedback context string (~200 tokens max)
+        """
+        if not self.user_id or strategy_type == StrategyType.UNKNOWN:
+            return ""
+        
+        try:
+            from app.core.database import get_session
+            from app.services.feedback_context import FeedbackContextService, format_feedback_for_prompt
+            
+            async with get_session() as session:
+                feedback_service = FeedbackContextService(session, self.user_id)
+                
+                # Check if we have enough data to provide useful feedback
+                should_inject = await feedback_service.should_inject_feedback(
+                    strategy_type=strategy_type,
+                    min_predictions=3,
+                )
+                
+                if not should_inject:
+                    logger.debug(f"Not enough data for feedback injection ({strategy_type.value})")
+                    return ""
+                
+                # Get combined context
+                context = await feedback_service.get_combined_context(
+                    strategy_type=strategy_type,
+                    include_global=True,
+                )
+                
+                if context:
+                    self._feedback_context = format_feedback_for_prompt(context)
+                    logger.info(f"Feedback context loaded for {strategy_type.value}")
+                    return self._feedback_context
+                
+        except Exception as e:
+            logger.warning(f"Failed to get feedback context: {e}")
+        
+        return ""
+
     async def _execute_simple_intent(self, message: str, intent: Intent) -> Optional[Dict[str, Any]]:
         """
         Execute a simple intent directly without multi-agent orchestration.
@@ -539,11 +623,15 @@ class AgentService:
                 "Please set LLM_PROVIDER=azure in your environment."
             )
     
-    async def _create_team(self) -> MagenticOneGroupChat:
+    async def _create_team(self, feedback_context: str = "") -> MagenticOneGroupChat:
         """
         Create the AITradingAdvisory team with all specialized crypto agents.
         
         This mirrors the team setup in src/main.py but configured for API use.
+        
+        Args:
+            feedback_context: Optional feedback from Learning System to inject
+                             into TechnicalAnalyst's system prompt
         """
         # Import crypto tools
         from crypto_tools import get_crypto_price, get_historical_data, get_market_info
@@ -694,7 +782,7 @@ NACH der Analyse IMMER ChartingAgent aufrufen mit:
 - support_levels: [aus echten Daten berechnete Levels]
 - resistance_levels: [aus echten Daten berechnete Levels]
 - entry_points: [berechnete Entry-Punkte]
-""" + SHARED_AGENT_RULES,
+""" + SHARED_AGENT_RULES + (f"\n{feedback_context}" if feedback_context else ""),
             description="Expert in technical analysis with DIRECT ACCESS to live Bitget data",
         )
         
@@ -990,8 +1078,21 @@ Use proper Markdown formatting with headers, bold text, tables, and bullet point
             timestamp=datetime.now(),
         )
         
+        # Classify strategy for Learning System feedback
+        strategy_type = await self.classify_strategy(message)
+        
+        # Get feedback context if user is authenticated and has history
+        feedback_context = ""
+        if self.user_id and strategy_type != StrategyType.UNKNOWN:
+            try:
+                feedback_context = await self._get_feedback_context(strategy_type)
+                if feedback_context:
+                    logger.info(f"Injecting feedback context for {strategy_type.value}")
+            except Exception as e:
+                logger.warning(f"Failed to get feedback context: {e}")
+        
         try:
-            team = await self._create_team()
+            team = await self._create_team(feedback_context=feedback_context)
         except Exception as e:
             logger.exception("Failed to create agent team")
             yield ErrorEvent(
