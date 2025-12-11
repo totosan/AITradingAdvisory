@@ -14,6 +14,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.config import get_settings
 from app.core.auth import (
     get_password_hash,
     verify_password,
@@ -88,6 +89,22 @@ async def register(
     Returns a JWT token for immediate authentication.
     """
     repo = UserRepository(db)
+    settings = get_settings()
+    
+    # Check email whitelist (case-insensitive)
+    # Empty list = closed registration (no one can register)
+    if not settings.allowed_emails:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration is currently closed"
+        )
+    
+    allowed_lower = [e.lower() for e in settings.allowed_emails]
+    if request.email.lower() not in allowed_lower:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration not allowed for this email"
+        )
     
     # Check if email already exists
     existing = await repo.get_by_email(request.email)

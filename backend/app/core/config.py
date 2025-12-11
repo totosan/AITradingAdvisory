@@ -89,16 +89,22 @@ class Settings(BaseSettings):
     jwt_secret_key: Optional[str] = None
     # JWT token expiration in minutes
     jwt_expire_minutes: int = 60
+    # Allowed emails for registration (comma-separated via ALLOWED_EMAILS env var)
+    # Empty list = no one can register (closed registration)
+    allowed_emails: list[str] = Field(default=["toto_san@live.com", "iwos@live.de"])
     
     class Config:
         # Look for .env in project root (3 levels up from this file)
         env_file = Path(__file__).parent.parent.parent.parent / ".env"
         env_file_encoding = "utf-8"
-        # Allow comma-separated lists for CORS origins
+        # Allow comma-separated lists for CORS origins and allowed emails
         @classmethod
         def parse_env_var(cls, field_name: str, raw_val: str):
             if field_name == "cors_origins":
                 return [x.strip() for x in raw_val.split(",")]
+            if field_name == "allowed_emails":
+                # Parse comma-separated emails, normalize to lowercase
+                return [x.strip().lower() for x in raw_val.split(",") if x.strip()]
             return raw_val
 
 

@@ -53,6 +53,21 @@ from intent_router import (
     StrategyType, STRATEGY_TYPE_MAP,
 )
 
+# Import Phase 8: Market Phase Detection and Agent Teams
+try:
+    from app.agents.market_phase_detector import (
+        MarketPhase, MarketPhaseDetector, MarketPhaseResult,
+        detect_market_phase,
+    )
+    from app.agents.teams import (
+        RangeTeam, BreakoutTeam, create_range_team, create_breakout_team,
+    )
+    PHASE8_AVAILABLE = True
+except ImportError:
+    PHASE8_AVAILABLE = False
+    MarketPhase = None
+    MarketPhaseDetector = None
+
 logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -457,6 +472,111 @@ class AgentService:
         self._tools_initialized = True
         logger.info(f"Intent router tools initialized (user: {self.user_id[:8] if self.user_id else 'global'}...)")
     
+    async def _detect_market_phase(self, symbol: str, interval: str = "1H") -> Optional[MarketPhaseResult]:
+        """
+        Detect the current market phase for a symbol.
+        
+        Used for intelligent team routing in Phase 8.
+        
+        Args:
+            symbol: Trading pair symbol (e.g., 'BTCUSDT')
+            interval: Timeframe interval (e.g., '1H', '4H')
+            
+        Returns:
+            MarketPhaseResult or None if detection fails
+        """
+        if not PHASE8_AVAILABLE:
+            logger.debug("Phase 8 not available, skipping market phase detection")
+            return None
+        
+        try:
+            import json
+            import pandas as pd
+            from exchange_tools import get_ohlcv_data
+            
+            # Fetch OHLCV data
+            ohlcv_json = get_ohlcv_data(symbol=symbol, interval=interval, limit=200)
+            ohlcv_data = json.loads(ohlcv_json)
+            
+            if "error" in ohlcv_data:
+                logger.warning(f"Failed to get OHLCV for phase detection: {ohlcv_data['error']}")
+                return None
+            
+            candles = ohlcv_data.get("candles", [])
+            if not candles:
+                return None
+            
+            df = pd.DataFrame(candles)
+            
+            # Detect market phase
+            detector = MarketPhaseDetector()
+            result = detector.detect(df)
+            
+            logger.info(f"Market phase detected for {symbol}: {result.phase.value} (conf: {result.confidence:.2f})")
+            return result
+            
+        except Exception as e:
+            logger.warning(f"Market phase detection failed: {e}")
+            return None
+    
+    def _get_team_for_phase(self, phase: MarketPhase) -> Optional[type]:
+        """
+        Get the appropriate team class for a market phase.
+        
+        Args:
+            phase: The detected market phase
+            
+        Returns:
+            Team class or None for full 6-agent team
+        """
+        if not PHASE8_AVAILABLE:
+            return None
+        
+        # Team mapping
+        phase_to_team = {
+            MarketPhase.RANGING: RangeTeam,
+            MarketPhase.BREAKOUT_PENDING: BreakoutTeam,
+            # MarketPhase.TRENDING_UP: TrendTeam,  # Future implementation
+            # MarketPhase.TRENDING_DOWN: TrendTeam,  # Future implementation
+            # MarketPhase.REVERSAL_POSSIBLE: ReversalTeam,  # Future implementation
+            MarketPhase.VOLATILE: None,  # Use full team
+        }
+        
+        return phase_to_team.get(phase)
+    
+    def _extract_symbol_from_message(self, message: str) -> Optional[str]:
+        """
+        Extract trading symbol from user message.
+        
+        Args:
+            message: User's message
+            
+        Returns:
+            Symbol like 'BTCUSDT' or None
+        """
+        import re
+        
+        # Common crypto symbols
+        symbols = [
+            'BTC', 'ETH', 'XRP', 'SOL', 'DOGE', 'ADA', 'AVAX', 'MATIC', 
+            'DOT', 'LINK', 'UNI', 'ATOM', 'LTC', 'BCH', 'NEAR', 'APT',
+            'ARB', 'OP', 'SUI', 'SEI', 'TIA', 'INJ', 'PEPE', 'WIF',
+        ]
+        
+        message_upper = message.upper()
+        
+        for symbol in symbols:
+            # Check for symbol mention
+            if re.search(rf'\b{symbol}\b', message_upper):
+                return f"{symbol}USDT"
+        
+        # Check for full pair format
+        match = re.search(r'\b([A-Z]{2,10})(USDT|USD|BUSD)\b', message_upper)
+        if match:
+            return f"{match.group(1)}USDT"
+        
+        return None
+
     async def classify_intent(self, message: str) -> Intent:
         """
         Classify the intent of a user message using LLM (with pattern fallback).
@@ -623,6 +743,78 @@ class AgentService:
                 "Please set LLM_PROVIDER=azure in your environment."
             )
     
+    async def _create_specialized_team(
+        self,
+        phase: MarketPhase,
+        feedback_context: str = "",
+    ) -> Optional[MagenticOneGroupChat]:
+        """
+        Create a specialized agent team for a specific market phase.
+        
+        Phase 8: Uses RangeTeam, BreakoutTeam, etc. for optimized analysis.
+        
+        Args:
+            phase: The detected market phase
+            feedback_context: Optional feedback from Learning System
+            
+        Returns:
+            MagenticOneGroupChat with specialized agents, or None to use full team
+        """
+        if not PHASE8_AVAILABLE:
+            return None
+        
+        from autogen_agentchat.agents import AssistantAgent
+        from autogen_agentchat.teams import MagenticOneGroupChat
+        
+        team_class = self._get_team_for_phase(phase)
+        
+        if team_class is None:
+            logger.info(f"No specialized team for phase {phase.value}, using full team")
+            return None
+        
+        try:
+            # Create team instance
+            team_instance = team_class(
+                model_client=self.model_client,
+                user_id=self.user_id,
+            )
+            
+            # Get tools from team
+            tools = team_instance.get_tools()
+            
+            # Get agent prompts from team
+            agent_prompts = team_instance.get_agent_prompts()
+            
+            # Create agents
+            agents = []
+            for agent_name, system_prompt in agent_prompts.items():
+                # Build complete prompt with feedback
+                full_prompt = team_instance.build_system_prompt(system_prompt)
+                
+                agent = AssistantAgent(
+                    name=agent_name,
+                    model_client=self.model_client,
+                    tools=tools,
+                    system_message=full_prompt + SHARED_AGENT_RULES,
+                    description=f"{agent_name} - {team_instance.config.focus_area}",
+                )
+                agents.append(agent)
+            
+            # Create the specialized team
+            specialized_team = MagenticOneGroupChat(
+                participants=agents,
+                model_client=self.model_client,
+                max_turns=team_instance.config.max_turns,
+                max_stalls=2,
+            )
+            
+            logger.info(f"Created specialized {team_class.__name__} with {len(agents)} agents")
+            return specialized_team
+            
+        except Exception as e:
+            logger.warning(f"Failed to create specialized team: {e}, falling back to full team")
+            return None
+
     async def _create_team(self, feedback_context: str = "") -> MagenticOneGroupChat:
         """
         Create the AITradingAdvisory team with all specialized crypto agents.
@@ -1091,8 +1283,53 @@ Use proper Markdown formatting with headers, bold text, tables, and bullet point
             except Exception as e:
                 logger.warning(f"Failed to get feedback context: {e}")
         
+        # Phase 8: Detect market phase and route to specialized team
+        market_phase_result = None
+        use_specialized_team = False
+        
+        if PHASE8_AVAILABLE:
+            # Extract symbol from message for phase detection
+            symbol = self._extract_symbol_from_message(message)
+            
+            if symbol:
+                yield StatusEvent(
+                    status="processing",
+                    message=f"Detecting market phase for {symbol}...",
+                    timestamp=datetime.now(),
+                )
+                
+                market_phase_result = await self._detect_market_phase(symbol)
+                
+                if market_phase_result:
+                    phase = market_phase_result.phase
+                    confidence = market_phase_result.confidence
+                    
+                    yield StatusEvent(
+                        status="processing",
+                        message=f"Market phase: {phase.value} (confidence: {confidence:.0%})",
+                        timestamp=datetime.now(),
+                    )
+                    
+                    # Only use specialized team if confidence is high enough
+                    if confidence >= 0.6:
+                        use_specialized_team = True
+                    else:
+                        logger.info(f"Phase confidence too low ({confidence:.2f}), using full team")
+        
         try:
-            team = await self._create_team(feedback_context=feedback_context)
+            team = None
+            
+            # Try specialized team first (Phase 8)
+            if use_specialized_team and market_phase_result:
+                team = await self._create_specialized_team(
+                    phase=market_phase_result.phase,
+                    feedback_context=feedback_context,
+                )
+            
+            # Fall back to full team if specialized creation failed or not applicable
+            if team is None:
+                team = await self._create_team(feedback_context=feedback_context)
+                
         except Exception as e:
             logger.exception("Failed to create agent team")
             yield ErrorEvent(
@@ -1103,10 +1340,12 @@ Use proper Markdown formatting with headers, bold text, tables, and bullet point
             )
             return
         
-        # Send ready status
+        # Send ready status with team info
+        team_type = "specialized" if use_specialized_team else "full"
+        phase_info = f" ({market_phase_result.phase.value})" if market_phase_result else ""
         yield StatusEvent(
             status="processing",
-            message="Agent team ready, processing query...",
+            message=f"{team_type.capitalize()} agent team ready{phase_info}, processing query...",
             timestamp=datetime.now(),
         )
         
