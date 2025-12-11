@@ -15,11 +15,21 @@ from typing import Optional, List, Dict, Any
 
 class ProviderType(Enum):
     """Supported exchange provider types."""
+    # Crypto providers
     COINGECKO = "coingecko"
     BITGET = "bitget"
+    # Stock providers
+    YAHOO_FINANCE = "yahoo_finance"
     # Future providers can be added here
     # BINANCE = "binance"
     # KRAKEN = "kraken"
+
+
+class AssetType(Enum):
+    """Asset type classification for routing."""
+    CRYPTO = "crypto"
+    STOCK = "stock"
+    UNKNOWN = "unknown"
 
 
 @dataclass

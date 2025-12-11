@@ -28,8 +28,10 @@ from typing import Annotated, Optional, List, Literal
 from exchange_providers import (
     ExchangeManager,
     ProviderType,
+    AssetType,
     CoinGeckoProvider,
     BitgetProvider,
+    YahooFinanceProvider,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,6 +116,13 @@ def get_exchange_manager_for_user(user_id: str) -> ExchangeManager:
         # Register CoinGecko as fallback (shared, no auth needed)
         manager.register_provider(ProviderType.COINGECKO, CoinGeckoProvider())
         
+        # Register Yahoo Finance for stocks (shared, no auth needed)
+        try:
+            manager.register_provider(ProviderType.YAHOO_FINANCE, YahooFinanceProvider())
+            logger.info("Yahoo Finance provider registered for user (stocks)")
+        except ImportError as e:
+            logger.warning(f"Could not initialize Yahoo Finance for user: {e}")
+        
         if ProviderType.BITGET in manager.available_providers:
             manager.set_default_provider(ProviderType.BITGET)
         
@@ -166,7 +175,7 @@ def get_exchange_manager() -> ExchangeManager:
             fallback_provider=ProviderType.COINGECKO,
         )
         
-        # Register Bitget FIRST (primary provider)
+        # Register Bitget FIRST (primary provider for crypto)
         # Use vault credentials if available, otherwise env vars
         try:
             if _vault_instance is not None:
@@ -181,12 +190,22 @@ def get_exchange_manager() -> ExchangeManager:
         except Exception as e:
             logger.warning(f"Could not initialize Bitget provider: {e}")
         
-        # Register CoinGecko as fallback
+        # Register CoinGecko as fallback for crypto
         _exchange_manager.register_provider(
             ProviderType.COINGECKO,
             CoinGeckoProvider()
         )
-        logger.info("CoinGecko provider registered (fallback)")
+        logger.info("CoinGecko provider registered (crypto fallback)")
+        
+        # Register Yahoo Finance for stocks
+        try:
+            _exchange_manager.register_provider(
+                ProviderType.YAHOO_FINANCE,
+                YahooFinanceProvider()
+            )
+            logger.info("Yahoo Finance provider registered (stocks)")
+        except ImportError as e:
+            logger.warning(f"Could not initialize Yahoo Finance provider: {e}")
         
         # Ensure Bitget is default if available
         if ProviderType.BITGET in _exchange_manager.available_providers:
@@ -732,9 +751,165 @@ def check_exchange_status() -> str:
         return json.dumps({"error": str(e)})
 
 
+# ==================== Stock Market Tools ====================
+
+
+def get_stock_price(
+    symbol: Annotated[str, "Stock ticker symbol (e.g., 'AAPL', 'MSFT', 'NVDA', 'SAP.DE')"],
+) -> str:
+    """
+    Get real-time stock price and market data.
+    
+    Uses Yahoo Finance to fetch current stock prices, volume,
+    and daily changes for stocks, ETFs, and indices.
+    
+    Supported symbols:
+    - US stocks: AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA, etc.
+    - German stocks: SAP.DE, SIE.DE, BMW.DE, VOW3.DE, etc.
+    - ETFs: SPY, QQQ, VTI, VOO, etc.
+    - Indices: ^GSPC (S&P 500), ^DJI (Dow Jones), ^GDAXI (DAX)
+    
+    Args:
+        symbol: Stock ticker symbol
+        
+    Returns:
+        JSON string with current price and market data
+        
+    Example:
+        >>> get_stock_price("AAPL")
+        '{"symbol": "AAPL", "price": 175.50, "change_24h": 1.2, ...}'
+    """
+    try:
+        manager = get_exchange_manager()
+        
+        # Use Yahoo Finance provider explicitly for stocks
+        ticker = manager.get_ticker(symbol, provider=ProviderType.YAHOO_FINANCE)
+        
+        result = {
+            "symbol": ticker.symbol,
+            "price": ticker.last_price,
+            "high_24h": ticker.high_24h,
+            "low_24h": ticker.low_24h,
+            "open": ticker.extra.get("open"),
+            "previous_close": ticker.extra.get("previous_close"),
+            "change_24h_pct": ticker.change_24h,
+            "volume_24h": ticker.volume_24h,
+            "volume_24h_usd": ticker.volume_24h_usd,
+            "market_cap": ticker.extra.get("market_cap"),
+            "currency": ticker.extra.get("currency", "USD"),
+            "asset_type": "stock",
+            "timestamp": ticker.timestamp.isoformat() if ticker.timestamp else None,
+            "provider": ticker.provider,
+            "_source": {
+                "provider": ticker.provider,
+                "timestamp": ticker.timestamp.isoformat() if ticker.timestamp else datetime.now().isoformat(),
+            },
+        }
+        
+        return json.dumps(result, indent=2)
+        
+    except Exception as e:
+        return json.dumps({"error": str(e), "symbol": symbol, "asset_type": "stock"})
+
+
+def get_stock_ohlcv(
+    symbol: Annotated[str, "Stock ticker symbol (e.g., 'AAPL', 'MSFT')"],
+    interval: Annotated[str, "Candle interval: '1d', '1h', '5m', '1wk', '1mo'"] = "1d",
+    limit: Annotated[int, "Number of candles to return (default 30)"] = 30,
+) -> str:
+    """
+    Get historical OHLCV (Open, High, Low, Close, Volume) data for a stock.
+    
+    Returns candlestick data for technical analysis of stocks.
+    
+    Args:
+        symbol: Stock ticker symbol (e.g., 'AAPL', 'MSFT')
+        interval: Time interval - '1m', '5m', '15m', '1h', '1d', '1wk', '1mo'
+        limit: Number of candles to return
+        
+    Returns:
+        JSON string with OHLCV data
+        
+    Example:
+        >>> get_stock_ohlcv("AAPL", interval="1d", limit=10)
+        '{"symbol": "AAPL", "interval": "1d", "candles": [...], ...}'
+    """
+    try:
+        manager = get_exchange_manager()
+        
+        candles = manager.get_candles(
+            symbol, 
+            interval=interval, 
+            limit=limit,
+            provider=ProviderType.YAHOO_FINANCE
+        )
+        
+        result = {
+            "symbol": symbol,
+            "interval": interval,
+            "count": len(candles),
+            "asset_type": "stock",
+            "candles": [c.to_dict() for c in candles],
+            "provider": "Yahoo Finance",
+        }
+        
+        # Add summary statistics
+        if candles:
+            closes = [c.close for c in candles]
+            result["summary"] = {
+                "latest_close": closes[-1],
+                "period_high": max(c.high for c in candles),
+                "period_low": min(c.low for c in candles),
+                "avg_volume": sum(c.volume for c in candles) / len(candles),
+            }
+        
+        return json.dumps(result, indent=2, default=str)
+        
+    except Exception as e:
+        return json.dumps({"error": str(e), "symbol": symbol})
+
+
+def get_stock_info(
+    symbol: Annotated[str, "Stock ticker symbol (e.g., 'AAPL', 'MSFT')"],
+) -> str:
+    """
+    Get detailed company information and fundamentals for a stock.
+    
+    Returns company details like sector, industry, PE ratio,
+    dividend yield, market cap, and company description.
+    
+    Args:
+        symbol: Stock ticker symbol
+        
+    Returns:
+        JSON string with company information
+        
+    Example:
+        >>> get_stock_info("AAPL")
+        '{"symbol": "AAPL", "name": "Apple Inc.", "sector": "Technology", ...}'
+    """
+    try:
+        manager = get_exchange_manager()
+        provider = manager.get_provider(ProviderType.YAHOO_FINANCE)
+        
+        # YahooFinanceProvider has a special method for company info
+        if hasattr(provider, 'get_company_info'):
+            info = provider.get_company_info(symbol)
+            info["asset_type"] = "stock"
+            return json.dumps(info, indent=2)
+        else:
+            return json.dumps({
+                "error": "Company info not available",
+                "symbol": symbol
+            })
+        
+    except Exception as e:
+        return json.dumps({"error": str(e), "symbol": symbol})
+
+
 # Export all tool functions
 __all__ = [
-    # Market data tools
+    # Crypto market data tools
     "get_realtime_price",
     "get_price_comparison",
     "get_orderbook_depth",
@@ -742,6 +917,10 @@ __all__ = [
     "get_recent_market_trades",
     "get_futures_data",
     "get_futures_candles",
+    # Stock market tools
+    "get_stock_price",
+    "get_stock_ohlcv",
+    "get_stock_info",
     # Account tools
     "get_account_balance",
     # Utility tools

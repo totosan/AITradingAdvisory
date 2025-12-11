@@ -12,6 +12,11 @@ Intent Types:
 - COMPARISON: Compare multiple assets
 - CONVERSATION: Follow-up or clarification
 
+Asset Types:
+- CRYPTO: Cryptocurrency (BTC, ETH, etc.) - routes to Bitget/CoinGecko
+- STOCK: Stocks/ETFs (AAPL, MSFT, etc.) - routes to Yahoo Finance
+- UNKNOWN: Could not determine asset type
+
 Usage:
     router = IntentRouter(model_client)
     intent = await router.classify_async(user_message)  # LLM-based
@@ -41,6 +46,13 @@ class IntentType(Enum):
     REPORT = "report"                     # Report generation request  
     COMPARISON = "comparison"             # Compare multiple assets
     CONVERSATION = "conversation"         # Follow-up, clarification, general chat
+
+
+class AssetType(Enum):
+    """Asset type for provider routing."""
+    CRYPTO = "crypto"                     # Cryptocurrency (BTC, ETH, etc.)
+    STOCK = "stock"                       # Stocks/ETFs (AAPL, MSFT, etc.)
+    UNKNOWN = "unknown"                   # Could not determine
 
 
 class StrategyType(Enum):
@@ -128,6 +140,10 @@ class Intent:
     Supports compound queries via sub_intents - e.g., "price of BTC and show chart"
     would have primary_type=CHART with sub_intents=[SIMPLE_LOOKUP] so we can
     show the price immediately while the chart is being generated.
+    
+    Asset type classification is used to route to the correct data provider:
+    - CRYPTO: Routes to Bitget (primary) or CoinGecko (fallback)
+    - STOCK: Routes to Yahoo Finance
     """
     type: IntentType
     confidence: float  # 0.0 to 1.0
@@ -135,6 +151,7 @@ class Intent:
     tool_hint: Optional[str] = None  # Suggested tool for SIMPLE_LOOKUP
     reason: str = ""  # Why this classification was made
     sub_intents: List[IntentType] = field(default_factory=list)  # Secondary intents that can be pre-executed
+    asset_type: AssetType = AssetType.UNKNOWN  # Detected asset type for routing
     
     def is_simple(self) -> bool:
         """Check if this intent can be handled with a simple tool call."""
@@ -152,34 +169,52 @@ class Intent:
     def is_compound(self) -> bool:
         """Check if this is a compound intent with multiple components."""
         return len(self.sub_intents) > 0
+    
+    def is_crypto(self) -> bool:
+        """Check if this intent is for cryptocurrency assets."""
+        return self.asset_type == AssetType.CRYPTO
+    
+    def is_stock(self) -> bool:
+        """Check if this intent is for stock market assets."""
+        return self.asset_type == AssetType.STOCK
 
 
 # Intent classification prompt - designed for fast, accurate classification with decomposition
-INTENT_CLASSIFICATION_PROMPT = '''You are an intent classifier for a cryptocurrency analysis platform.
+INTENT_CLASSIFICATION_PROMPT = '''You are an intent classifier for a financial analysis platform supporting both cryptocurrencies and stocks.
 
-Classify the user's message into a PRIMARY intent and optional SECONDARY intents for compound queries.
+Classify the user's message into a PRIMARY intent, optional SECONDARY intents, and detect the ASSET TYPE.
 
 Primary intents (pick the MAIN goal):
-- **simple_lookup**: User ONLY wants quick data (price, basic info). Examples: "What's the price of BTC?", "How much is ETH?"
-- **analysis**: User wants in-depth analysis, trends, signals, recommendations. Examples: "Analyze BTC", "What's the situation with ETH?"
-- **chart**: User wants a chart or visualization. Examples: "Create a chart for BTC", "Show me a dashboard"
-- **comparison**: User wants to compare assets. Examples: "Compare BTC vs ETH", "Which is better?"
+- **simple_lookup**: User ONLY wants quick data (price, basic info). Examples: "What's the price of BTC?", "AAPL price?"
+- **analysis**: User wants in-depth analysis, trends, signals, recommendations. Examples: "Analyze BTC", "What's the situation with NVDA?"
+- **chart**: User wants a chart or visualization. Examples: "Create a chart for BTC", "Show me AAPL chart"
+- **comparison**: User wants to compare assets. Examples: "Compare BTC vs ETH", "AAPL vs MSFT"
 - **report**: User wants a written report. Examples: "Write a report on BTC"
 - **conversation**: General questions, follow-ups. Examples: "Thanks", "What do you mean?"
+
+Asset types:
+- **crypto**: Cryptocurrencies (BTC, ETH, SOL, XRP, DOGE, etc.) - uses Bitget/CoinGecko
+- **stock**: Stocks, ETFs, indices (AAPL, MSFT, NVDA, SPY, ^GSPC, DAX, etc.) - uses Yahoo Finance
+- **unknown**: Cannot determine
 
 For COMPOUND queries (e.g., "What is the price of BTC and show me a chart?"), identify:
 1. The PRIMARY intent (the main deliverable - e.g., "chart")
 2. Any SECONDARY intents that can be answered quickly first (e.g., "simple_lookup" for price)
 
-Also extract cryptocurrency symbols (BTC, ETH, SOL, SUI, XRP, ADA, DOGE, AVAX, DOT, MATIC, LINK, etc.).
+Extract symbols:
+- Crypto: BTC, ETH, SOL, SUI, XRP, ADA, DOGE, AVAX, DOT, MATIC, LINK, etc.
+- Stocks: AAPL, MSFT, GOOGL, NVDA, TSLA, AMZN, META, etc.
+- German stocks: SAP, SIE, BMW, VOW3, BAYN, ALV, etc.
+- Indices: ^GSPC (S&P 500), ^DJI (Dow Jones), ^GDAXI (DAX)
 
 Respond ONLY with valid JSON:
-{"intent": "<primary_intent>", "sub_intents": ["<secondary_intent>"], "symbols": ["SYM1"], "confidence": 0.9, "reason": "explanation"}
+{"intent": "<primary_intent>", "sub_intents": ["<secondary_intent>"], "symbols": ["SYM1"], "asset_type": "crypto|stock|unknown", "confidence": 0.9, "reason": "explanation"}
 
 Examples:
-- "BTC price" -> {"intent": "simple_lookup", "sub_intents": [], "symbols": ["BTC"], "confidence": 0.95, "reason": "Simple price query"}
-- "Price of BTC and create a chart" -> {"intent": "chart", "sub_intents": ["simple_lookup"], "symbols": ["BTC"], "confidence": 0.9, "reason": "Chart request with price component"}
-- "Analyze ETH and show current price" -> {"intent": "analysis", "sub_intents": ["simple_lookup"], "symbols": ["ETH"], "confidence": 0.9, "reason": "Analysis with price lookup"}
+- "BTC price" -> {"intent": "simple_lookup", "sub_intents": [], "symbols": ["BTC"], "asset_type": "crypto", "confidence": 0.95, "reason": "Crypto price query"}
+- "AAPL stock price" -> {"intent": "simple_lookup", "sub_intents": [], "symbols": ["AAPL"], "asset_type": "stock", "confidence": 0.95, "reason": "Stock price query"}
+- "Analyze NVDA" -> {"intent": "analysis", "sub_intents": [], "symbols": ["NVDA"], "asset_type": "stock", "confidence": 0.9, "reason": "Stock analysis"}
+- "Compare BTC vs ETH" -> {"intent": "comparison", "sub_intents": [], "symbols": ["BTC", "ETH"], "asset_type": "crypto", "confidence": 0.9, "reason": "Crypto comparison"}
 
 User message: '''
 
@@ -207,15 +242,33 @@ class IntentRouter:
         self._llm_initialized = False
         
         # Known crypto symbols for extraction
-        self._known_symbols = {
+        self._known_crypto_symbols = {
             "BTC", "ETH", "SOL", "SUI", "XRP", "ADA", "DOGE", "AVAX", 
             "DOT", "MATIC", "LINK", "UNI", "ATOM", "LTC", "BCH", "NEAR",
             "APT", "ARB", "OP", "INJ", "TIA", "SEI", "MEME", "PEPE",
             "SHIB", "BNB", "TON", "TRX", "HBAR", "FIL", "AAVE", "MKR",
+            "BONK", "WIF", "FTM", "ALGO", "XLM", "VET", "EGLD", "SAND",
+            "MANA", "AXS", "GALA", "ENJ", "FLOW", "THETA", "GRT", "RNDR",
         }
         
-        # Full name to symbol mapping
-        self._name_to_symbol = {
+        # Known stock symbols for extraction
+        self._known_stock_symbols = {
+            # US Tech Giants
+            "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "NVDA", "TSLA",
+            "AMD", "INTC", "CRM", "ORCL", "IBM", "CSCO", "ADBE", "NFLX",
+            # US Finance
+            "JPM", "BAC", "WFC", "GS", "MS", "V", "MA", "PYPL",
+            # US Industrial & Consumer
+            "DIS", "NKE", "MCD", "KO", "PEP", "WMT", "HD", "BA", "CAT",
+            # German Stocks (base symbols)
+            "SAP", "SIE", "ALV", "DTE", "BAYN", "BMW", "MBG", "VOW3",
+            "ADS", "BAS", "DB1", "DBK", "DPW", "FRE", "HEI", "IFX",
+            # ETFs
+            "SPY", "QQQ", "DIA", "IWM", "VTI", "VOO", "ARKK", "XLF", "XLE",
+        }
+        
+        # Crypto full name to symbol mapping
+        self._crypto_name_to_symbol = {
             "BITCOIN": "BTC", "ETHEREUM": "ETH", "SOLANA": "SOL",
             "RIPPLE": "XRP", "CARDANO": "ADA", "DOGECOIN": "DOGE",
             "AVALANCHE": "AVAX", "POLKADOT": "DOT", "POLYGON": "MATIC",
@@ -223,6 +276,26 @@ class IntentRouter:
             "LITECOIN": "LTC", "APTOS": "APT", "ARBITRUM": "ARB",
             "OPTIMISM": "OP", "INJECTIVE": "INJ", "CELESTIA": "TIA",
         }
+        
+        # Stock full name to symbol mapping
+        self._stock_name_to_symbol = {
+            "APPLE": "AAPL", "MICROSOFT": "MSFT", "GOOGLE": "GOOGL",
+            "ALPHABET": "GOOGL", "AMAZON": "AMZN", "FACEBOOK": "META",
+            "NVIDIA": "NVDA", "TESLA": "TSLA", "NETFLIX": "NFLX",
+            "DISNEY": "DIS", "COCA-COLA": "KO", "PEPSI": "PEP",
+            "MCDONALDS": "MCD", "NIKE": "NKE", "WALMART": "WMT",
+            "BOEING": "BA", "VISA": "V", "MASTERCARD": "MA",
+            "PAYPAL": "PYPL", "JPMORGAN": "JPM", "GOLDMAN": "GS",
+            # German companies
+            "SIEMENS": "SIE.DE", "BAYER": "BAYN.DE", "MERCEDES": "MBG.DE",
+            "VOLKSWAGEN": "VOW3.DE", "VW": "VOW3.DE", "ADIDAS": "ADS.DE",
+            "DEUTSCHE BANK": "DBK.DE", "ALLIANZ": "ALV.DE", "BASF": "BAS.DE",
+            "DEUTSCHE TELEKOM": "DTE.DE", "TELEKOM": "DTE.DE",
+        }
+        
+        # Keep backward compatibility aliases
+        self._known_symbols = self._known_crypto_symbols
+        self._name_to_symbol = self._crypto_name_to_symbol
     
     def _get_model_client(self):
         """Get or create the model client for LLM classification."""
@@ -268,24 +341,88 @@ class IntentRouter:
             logger.warning(f"Could not initialize LLM for intent classification: {e}")
             return None
     
-    def _extract_symbols(self, text: str) -> List[str]:
-        """Extract cryptocurrency symbols from text."""
+    def _extract_symbols(self, text: str) -> Tuple[List[str], AssetType]:
+        """
+        Extract symbols from text and detect asset type.
+        
+        Returns:
+            Tuple of (list of symbols, detected asset type)
+        """
         text_upper = text.upper()
-        found = []
+        crypto_found = []
+        stock_found = []
         
-        # Check for known symbols
-        for sym in self._known_symbols:
+        # Check for known crypto symbols
+        for sym in self._known_crypto_symbols:
             if re.search(rf'\b{sym}\b', text_upper):
-                found.append(f"{sym}USDT")
+                crypto_found.append(f"{sym}USDT")
         
-        # Check for full names
-        for name, sym in self._name_to_symbol.items():
+        # Check for crypto full names
+        for name, sym in self._crypto_name_to_symbol.items():
             if re.search(rf'\b{name}\b', text_upper):
                 symbol = f"{sym}USDT"
-                if symbol not in found:
-                    found.append(symbol)
+                if symbol not in crypto_found:
+                    crypto_found.append(symbol)
         
-        return found
+        # Check for known stock symbols
+        for sym in self._known_stock_symbols:
+            if re.search(rf'\b{sym}\b', text_upper):
+                if sym not in stock_found:
+                    stock_found.append(sym)
+        
+        # Check for stock full names
+        for name, sym in self._stock_name_to_symbol.items():
+            if re.search(rf'\b{name}\b', text_upper):
+                if sym not in stock_found:
+                    stock_found.append(sym)
+        
+        # Check for stock patterns with exchange suffix (.DE, .L, etc.)
+        stock_patterns = re.findall(r'\b([A-Z]{2,5})\.(DE|L|PA|MI|SW|AS)\b', text_upper)
+        for match in stock_patterns:
+            symbol = f"{match[0]}.{match[1]}"
+            if symbol not in stock_found:
+                stock_found.append(symbol)
+        
+        # Check for index symbols (^GSPC, ^DJI, etc.)
+        index_patterns = re.findall(r'\^[A-Z]{2,6}', text_upper)
+        for idx in index_patterns:
+            if idx not in stock_found:
+                stock_found.append(idx)
+        
+        # Detect keywords that indicate asset type
+        stock_keywords = ["stock", "aktie", "share", "etf", "index", "dax", "s&p", "dow", "nasdaq"]
+        crypto_keywords = ["crypto", "krypto", "coin", "token", "defi", "nft"]
+        
+        has_stock_keyword = any(kw in text.lower() for kw in stock_keywords)
+        has_crypto_keyword = any(kw in text.lower() for kw in crypto_keywords)
+        
+        # Determine asset type
+        if stock_found and not crypto_found:
+            asset_type = AssetType.STOCK
+            return (stock_found, asset_type)
+        elif crypto_found and not stock_found:
+            asset_type = AssetType.CRYPTO
+            return (crypto_found, asset_type)
+        elif stock_found and crypto_found:
+            # Mixed - use keywords to decide, default to crypto
+            if has_stock_keyword and not has_crypto_keyword:
+                return (stock_found, AssetType.STOCK)
+            else:
+                return (crypto_found, AssetType.CRYPTO)
+        elif has_stock_keyword:
+            return ([], AssetType.STOCK)
+        elif has_crypto_keyword:
+            return ([], AssetType.CRYPTO)
+        else:
+            return ([], AssetType.UNKNOWN)
+    
+    def _extract_symbols_legacy(self, text: str) -> List[str]:
+        """
+        Legacy method for backward compatibility.
+        Extracts crypto symbols only.
+        """
+        symbols, _ = self._extract_symbols(text)
+        return symbols
     
     async def _classify_with_llm(self, message: str) -> Optional[Intent]:
         """
@@ -362,6 +499,72 @@ class IntentRouter:
             else:
                 logger.info(f"LLM classified '{message[:50]}...' as {intent_type.value} (conf: {confidence:.2f})")
             
+            # Detect asset type from LLM response or pattern matching
+            asset_type_str = data.get("asset_type", "unknown").lower()
+            if asset_type_str == "crypto":
+                asset_type = AssetType.CRYPTO
+            elif asset_type_str == "stock":
+                asset_type = AssetType.STOCK
+            else:
+                # Fallback to pattern detection
+                _, detected_asset_type = self._extract_symbols(message)
+                asset_type = detected_asset_type
+            
+            # Process symbols based on asset type
+            llm_symbols = data.get("symbols", [])
+            symbols = []
+            
+            if asset_type == AssetType.STOCK:
+                # Stock symbols - keep as-is or add exchange suffix
+                for sym in llm_symbols:
+                    sym_upper = sym.upper().strip()
+                    # Check if it's a known stock or needs suffix
+                    if sym_upper in self._known_stock_symbols:
+                        symbols.append(sym_upper)
+                    elif sym_upper in self._stock_name_to_symbol:
+                        symbols.append(self._stock_name_to_symbol[sym_upper])
+                    else:
+                        symbols.append(sym_upper)
+            else:
+                # Crypto symbols - add USDT suffix
+                for sym in llm_symbols:
+                    sym_upper = sym.upper().replace("USDT", "").strip()
+                    if sym_upper in self._known_crypto_symbols:
+                        symbols.append(f"{sym_upper}USDT")
+                    elif sym_upper in self._crypto_name_to_symbol:
+                        symbols.append(f"{self._crypto_name_to_symbol[sym_upper]}USDT")
+                    else:
+                        symbols.append(f"{sym_upper}USDT")
+            
+            # Also extract from original message in case LLM missed some
+            msg_symbols, msg_asset_type = self._extract_symbols(message)
+            for s in msg_symbols:
+                if s not in symbols:
+                    symbols.append(s)
+            
+            # Use message asset type if LLM didn't detect one
+            if asset_type == AssetType.UNKNOWN and msg_asset_type != AssetType.UNKNOWN:
+                asset_type = msg_asset_type
+            
+            confidence = float(data.get("confidence", 0.85))
+            reason = data.get("reason", "LLM classification")
+            
+            # Determine tool hint for simple lookups (primary or sub-intent)
+            tool_hint = None
+            if intent_type == IntentType.SIMPLE_LOOKUP or IntentType.SIMPLE_LOOKUP in sub_intents:
+                if asset_type == AssetType.STOCK:
+                    tool_hint = "get_stock_price"
+                else:
+                    tool_hint = "get_realtime_price"
+            
+            # Log classification with asset type
+            asset_info = f", asset_type={asset_type.value}" if asset_type != AssetType.UNKNOWN else ""
+            if sub_intents:
+                sub_names = [s.value for s in sub_intents]
+                logger.info(f"LLM classified '{message[:50]}...' as {intent_type.value} with sub-intents {sub_names}{asset_info}")
+            else:
+                logger.info(f"LLM classified '{message[:50]}...' as {intent_type.value} (conf: {confidence:.2f}){asset_info}")
+            
             return Intent(
                 type=intent_type,
                 confidence=confidence,
@@ -369,6 +572,7 @@ class IntentRouter:
                 tool_hint=tool_hint,
                 reason=f"LLM: {reason}",
                 sub_intents=sub_intents,
+                asset_type=asset_type,
             )
             
         except Exception as e:
@@ -383,7 +587,7 @@ class IntentRouter:
         Supports compound query detection via sub_intents.
         """
         message_lower = message.lower().strip()
-        symbols = self._extract_symbols(message)
+        symbols, asset_type = self._extract_symbols(message)
         entities = {"symbols": symbols}
         sub_intents = []
         
@@ -393,18 +597,20 @@ class IntentRouter:
                 type=IntentType.CONVERSATION,
                 confidence=1.0,
                 entities=entities,
-                reason="Empty message"
+                reason="Empty message",
+                asset_type=asset_type,
             )
         
         # Detect compound queries - check for multiple intent signals
-        has_price_component = any(t in message_lower for t in ["price", "how much", "cost"])
+        has_price_component = any(t in message_lower for t in ["price", "how much", "cost", "preis", "kurs"])
         has_chart_component = any(t in message_lower for t in ["chart", "graph", "dashboard", "visuali"])
         has_analysis_component = any(t in message_lower for t in [
             "analyze", "analysis", "situation", "outlook", "trend", 
-            "recommend", "should i", "what do you think"
+            "recommend", "should i", "what do you think",
+            "analysiere", "analyse", "empfehlung"
         ])
-        has_report_component = any(t in message_lower for t in ["report", "document", "write up"])
-        has_comparison_component = any(t in message_lower for t in [" vs ", " versus ", "compare"])
+        has_report_component = any(t in message_lower for t in ["report", "document", "write up", "bericht"])
+        has_comparison_component = any(t in message_lower for t in [" vs ", " versus ", "compare", "vergleich"])
         
         # Count how many intent components are present
         components = [
@@ -441,6 +647,8 @@ class IntentRouter:
                 sub_intents.insert(0, IntentType.SIMPLE_LOOKUP)
             
             tool_hint = "get_realtime_price" if IntentType.SIMPLE_LOOKUP in sub_intents else None
+            if asset_type == AssetType.STOCK and IntentType.SIMPLE_LOOKUP in sub_intents:
+                tool_hint = "get_stock_price"
             
             return Intent(
                 type=primary_type,
@@ -449,6 +657,7 @@ class IntentRouter:
                 tool_hint=tool_hint,
                 reason=f"Compound query: {primary_type.value} with {[s.value for s in sub_intents]}",
                 sub_intents=sub_intents,
+                asset_type=asset_type,
             )
         
         # Simple price patterns (high confidence) - only if JUST price
@@ -459,18 +668,21 @@ class IntentRouter:
             r"^price of\b",
             r"^\w+ price\??$",
             r"^(?:current )?price",
+            r"^(?:was|wie) (?:kostet|ist der (?:preis|kurs))",  # German
         ]
         
         for pattern in simple_patterns:
             if re.search(pattern, message_lower):
                 # Make sure it's not also asking for analysis/chart/etc
                 if not any(t in message_lower for t in ["analyze", "analysis", "trend", "signal", "recommend", "chart", "graph"]):
+                    tool_hint = "get_stock_price" if asset_type == AssetType.STOCK else "get_realtime_price"
                     return Intent(
                         type=IntentType.SIMPLE_LOOKUP,
                         confidence=0.85,
                         entities=entities,
-                        tool_hint="get_realtime_price",
-                        reason="Matches simple price pattern"
+                        tool_hint=tool_hint,
+                        reason="Matches simple price pattern",
+                        asset_type=asset_type,
                     )
         
         # Analysis triggers
@@ -479,26 +691,30 @@ class IntentRouter:
             "forecast", "trend", "momentum", "signal", "recommend",
             "should i buy", "should i sell", "entry", "exit",
             "support", "resistance", "technical", "what do you think",
+            "analysiere", "empfehlung", "prognose",  # German
         ]
         if any(t in message_lower for t in analysis_triggers):
             return Intent(
                 type=IntentType.ANALYSIS,
                 confidence=0.85,
                 entities=entities,
-                reason="Contains analysis triggers"
+                reason="Contains analysis triggers",
+                asset_type=asset_type,
             )
         
         # Comparison triggers (check before chart triggers)
         comparison_triggers = [
             " vs ", " versus ", "compare", "comparison", 
             "better than", "which is better", "difference between",
+            "vergleich", "vergleiche",  # German
         ]
         if any(t in message_lower for t in comparison_triggers):
             return Intent(
                 type=IntentType.COMPARISON,
                 confidence=0.85,
                 entities=entities,
-                reason="Contains comparison triggers"
+                reason="Contains comparison triggers",
+                asset_type=asset_type,
             )
         
         # Chart triggers
@@ -507,35 +723,42 @@ class IntentRouter:
                 type=IntentType.CHART,
                 confidence=0.85,
                 entities=entities,
-                reason="Contains chart triggers"
+                reason="Contains chart triggers",
+                asset_type=asset_type,
             )
         
         # Report triggers
-        if any(t in message_lower for t in ["report", "document", "write up"]):
+        if any(t in message_lower for t in ["report", "document", "write up", "bericht"]):
             return Intent(
                 type=IntentType.REPORT,
                 confidence=0.85,
                 entities=entities,
-                reason="Contains report triggers"
+                reason="Contains report triggers",
+                asset_type=asset_type,
             )
         
         # Short message with symbols -> likely simple lookup
         if symbols and len(message.split()) <= 6:
+            tool_hint = "get_stock_price" if asset_type == AssetType.STOCK else "get_realtime_price"
+            asset_desc = "stock" if asset_type == AssetType.STOCK else "crypto"
             return Intent(
                 type=IntentType.SIMPLE_LOOKUP,
                 confidence=0.7,
                 entities=entities,
-                tool_hint="get_realtime_price",
-                reason="Short message with crypto symbols"
+                tool_hint=tool_hint,
+                reason=f"Short message with {asset_desc} symbols",
+                asset_type=asset_type,
             )
         
-        # Default to analysis for anything with crypto symbols
+        # Default to analysis for anything with symbols
         if symbols:
+            asset_desc = "stock" if asset_type == AssetType.STOCK else "crypto"
             return Intent(
                 type=IntentType.ANALYSIS,
                 confidence=0.6,
                 entities=entities,
-                reason="Contains crypto symbols, defaulting to analysis"
+                reason=f"Contains {asset_desc} symbols, defaulting to analysis",
+                asset_type=asset_type,
             )
         
         # Default fallback
@@ -543,7 +766,8 @@ class IntentRouter:
             type=IntentType.CONVERSATION,
             confidence=0.5,
             entities=entities,
-            reason="No specific pattern matched"
+            reason="No specific pattern matched",
+            asset_type=asset_type,
         )
     
     async def classify_async(self, message: str) -> Intent:

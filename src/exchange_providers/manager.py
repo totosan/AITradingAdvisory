@@ -37,6 +37,7 @@ from typing import Optional, List, Dict, Any, Union
 from .base import (
     ExchangeProvider,
     ProviderType,
+    AssetType,
     TickerData,
     CandleData,
     OrderBookData,
@@ -83,6 +84,43 @@ COINGECKO_TO_BITGET_MAP = {
 
 # Reverse mapping: Bitget pairs → CoinGecko IDs
 BITGET_TO_COINGECKO_MAP = {v: k for k, v in COINGECKO_TO_BITGET_MAP.items()}
+
+# Known crypto symbols for asset type detection
+KNOWN_CRYPTO_SYMBOLS = {
+    "BTC", "ETH", "SOL", "SUI", "XRP", "ADA", "DOGE", "AVAX",
+    "DOT", "MATIC", "LINK", "UNI", "ATOM", "LTC", "BCH", "NEAR",
+    "APT", "ARB", "OP", "INJ", "TIA", "SEI", "MEME", "PEPE",
+    "SHIB", "BNB", "TON", "TRX", "HBAR", "FIL", "AAVE", "MKR",
+    "BONK", "WIF", "FTM", "ALGO", "XLM", "VET", "EGLD", "SAND",
+    "MANA", "AXS", "GALA", "ENJ", "FLOW", "THETA", "GRT", "RNDR",
+}
+
+# Known stock symbols for asset type detection  
+KNOWN_STOCK_SYMBOLS = {
+    # US Tech Giants
+    "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "NVDA", "TSLA",
+    "AMD", "INTC", "CRM", "ORCL", "IBM", "CSCO", "ADBE", "NFLX",
+    # US Finance
+    "JPM", "BAC", "WFC", "GS", "MS", "V", "MA", "PYPL",
+    # US Industrial & Consumer
+    "DIS", "NKE", "MCD", "KO", "PEP", "WMT", "HD", "BA", "CAT",
+    # German Stocks (XETRA)
+    "SAP", "SIE", "ALV", "DTE", "BAYN", "BMW", "MBG", "VOW3",
+    "ADS", "BAS", "DB1", "DBK", "DPW", "FRE", "HEI", "IFX",
+    "LIN", "MRK", "MUV2", "RWE", "VNA", "ZAL",
+    # ETFs
+    "SPY", "QQQ", "DIA", "IWM", "VTI", "VOO", "ARKK", "XLF", "XLE",
+}
+
+# Stock name to symbol mapping
+STOCK_NAME_TO_SYMBOL = {
+    "APPLE": "AAPL", "MICROSOFT": "MSFT", "GOOGLE": "GOOGL",
+    "AMAZON": "AMZN", "FACEBOOK": "META", "NVIDIA": "NVDA",
+    "TESLA": "TSLA", "NETFLIX": "NFLX", "DISNEY": "DIS",
+    "SIEMENS": "SIE.DE", "BMW": "BMW.DE", "MERCEDES": "MBG.DE",
+    "VOLKSWAGEN": "VOW3.DE", "VW": "VOW3.DE", "BAYER": "BAYN.DE",
+    "ADIDAS": "ADS.DE", "DEUTSCHE BANK": "DBK.DE", "ALLIANZ": "ALV.DE",
+}
 
 
 class ExchangeManager:
@@ -588,15 +626,17 @@ class ExchangeManager:
 def create_exchange_manager(
     include_coingecko: bool = True,
     include_bitget: bool = True,
+    include_yahoo_finance: bool = True,
     default_provider: Optional[ProviderType] = None,
     fallback_enabled: bool = True,
 ) -> ExchangeManager:
     """
-    Create a pre-configured ExchangeManager with Bitget as default.
+    Create a pre-configured ExchangeManager with Bitget as default for crypto.
     
     Args:
-        include_coingecko: Register CoinGecko provider
-        include_bitget: Register Bitget provider (from env vars)
+        include_coingecko: Register CoinGecko provider (crypto)
+        include_bitget: Register Bitget provider from env vars (crypto)
+        include_yahoo_finance: Register Yahoo Finance provider (stocks)
         default_provider: Override default provider (defaults to BITGET)
         fallback_enabled: Enable automatic fallback to CoinGecko
         
@@ -605,13 +645,14 @@ def create_exchange_manager(
     """
     from .coingecko_provider import CoinGeckoProvider
     from .bitget_provider import BitgetProvider
+    from .yahoo_finance_provider import YahooFinanceProvider
     
     manager = ExchangeManager(
         default_provider=default_provider,
         fallback_enabled=fallback_enabled,
     )
     
-    # Register Bitget FIRST (as primary provider)
+    # Register Bitget FIRST (as primary crypto provider)
     if include_bitget:
         try:
             bitget = BitgetProvider.from_env()
@@ -620,10 +661,18 @@ def create_exchange_manager(
         except Exception as e:
             logger.warning(f"Could not initialize Bitget provider: {e}")
     
-    # Register CoinGecko as fallback
+    # Register CoinGecko as fallback for crypto
     if include_coingecko:
         manager.register_provider(ProviderType.COINGECKO, CoinGeckoProvider())
-        logger.info("CoinGecko provider registered (fallback)")
+        logger.info("CoinGecko provider registered (crypto fallback)")
+    
+    # Register Yahoo Finance for stocks
+    if include_yahoo_finance:
+        try:
+            manager.register_provider(ProviderType.YAHOO_FINANCE, YahooFinanceProvider())
+            logger.info("Yahoo Finance provider registered (stocks)")
+        except ImportError as e:
+            logger.warning(f"Could not initialize Yahoo Finance provider: {e}")
     
     # Set default to Bitget if available, otherwise CoinGecko
     if default_provider:
@@ -638,3 +687,78 @@ def create_exchange_manager(
     
     logger.info(f"ExchangeManager ready: default={manager.default_provider}, fallback={manager.fallback_enabled}")
     return manager
+
+
+def detect_asset_type(symbol: str) -> AssetType:
+    """
+    Detect whether a symbol is crypto or stock.
+    
+    Uses multiple heuristics:
+    1. Known symbol lists
+    2. Suffix patterns (USDT = crypto, .DE/.L = stock)
+    3. Prefix patterns (^ = index)
+    
+    Args:
+        symbol: The symbol to classify
+        
+    Returns:
+        AssetType.CRYPTO, AssetType.STOCK, or AssetType.UNKNOWN
+    """
+    symbol_upper = symbol.upper().strip()
+    symbol_clean = symbol_upper.replace("USDT", "").replace("USD", "")
+    
+    # Check for crypto patterns first
+    if symbol_upper.endswith("USDT") or symbol_upper.endswith("USDC"):
+        return AssetType.CRYPTO
+    
+    if symbol_clean in KNOWN_CRYPTO_SYMBOLS:
+        return AssetType.CRYPTO
+    
+    # Check for stock patterns
+    if symbol_upper.startswith("^"):  # Index
+        return AssetType.STOCK
+    
+    # Check for exchange suffixes (stock exchanges)
+    stock_suffixes = [".DE", ".L", ".PA", ".MI", ".SW", ".AS", ".BR", ".HK", ".T"]
+    if any(symbol_upper.endswith(suffix) for suffix in stock_suffixes):
+        return AssetType.STOCK
+    
+    if symbol_upper in KNOWN_STOCK_SYMBOLS:
+        return AssetType.STOCK
+    
+    if symbol_upper in STOCK_NAME_TO_SYMBOL:
+        return AssetType.STOCK
+    
+    # Check CoinGecko mapping (lowercase)
+    if symbol.lower() in COINGECKO_TO_BITGET_MAP:
+        return AssetType.CRYPTO
+    
+    # Default to unknown - let caller decide
+    return AssetType.UNKNOWN
+
+
+def get_provider_for_asset(
+    asset_type: AssetType,
+    manager: ExchangeManager,
+) -> Optional[ProviderType]:
+    """
+    Get the appropriate provider for an asset type.
+    
+    Args:
+        asset_type: The type of asset (CRYPTO or STOCK)
+        manager: The exchange manager instance
+        
+    Returns:
+        ProviderType for the asset, or None if not available
+    """
+    if asset_type == AssetType.CRYPTO:
+        # Prefer Bitget, fallback to CoinGecko
+        if ProviderType.BITGET in manager.available_providers:
+            return ProviderType.BITGET
+        elif ProviderType.COINGECKO in manager.available_providers:
+            return ProviderType.COINGECKO
+    elif asset_type == AssetType.STOCK:
+        if ProviderType.YAHOO_FINANCE in manager.available_providers:
+            return ProviderType.YAHOO_FINANCE
+    
+    return None
